@@ -1,0 +1,54 @@
+#!/bin/sh
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+
+# resolve links - $0 may be a softlink
+PRG="$0"
+
+while [ -h "$PRG" ]; do
+  ls=`ls -ld "$PRG"`
+  link=`expr "$ls" : '.*-> \(.*\)$'`
+  if expr "$link" : '/.*' > /dev/null; then
+    PRG="$link"
+  else
+    PRG="${PRG%/*}"/"$link"
+  fi
+done
+
+BINDIR="${PRG%/*}"
+ROOTDIR="${BINDIR%/*}"
+
+java_cmd=/usr/local/openjdk22/bin/java
+
+if [ -x /jail/podman"$java_cmd" ]; then
+  java_cmd=/jail/podman"$java_cmd"
+fi
+
+if [ -x "$ROOTDIR"/jre/bin/java ]; then
+  java_cmd="$ROOTDIR"/jre/bin/java
+fi
+
+if [ -x "$java_cmd" ]; then
+  export java_cmd="$java_cmd"
+fi
+
+export M2_LOCAL_REPO="$ROOTDIR"/lib
+
+"$ROOTDIR"/ocijail-wrapper/src/main/kotlin/org/cikit/libjail/oci/main.kt "$@"
+rc="$?"
+
+if [ "$rc" -eq 0 ]; then
+  exit
+fi
+
+if [ "$rc" -eq 9 ]; then
+  if /usr/local/bin/ocijail "$@"; then
+    exit 0
+  else
+    echo "ocijail terminated with exit code $?" >&2
+    exit "$?"
+  fi
+fi
+
+echo "rejected oci runtime execution with exit code $rc" >&2
+exit 1

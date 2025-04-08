@@ -8,6 +8,8 @@ import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.cikit.libjail.*
 import java.security.MessageDigest
 import kotlin.io.path.*
@@ -41,6 +43,20 @@ class CreateCommand : CliktCommand("create") {
 
     override fun run() {
         try {
+            val wrapperStateIn = options.readWrapperState(containerId)
+            val wrapperStateOut = buildJsonObject {
+                if (wrapperStateIn != null) {
+                    for ((k, v) in wrapperStateIn.entries) {
+                        put(k, v)
+                    }
+                }
+                put("logFile", options.logFile?.pathString)
+                put("logLevel", options.logLevel)
+                put("logFormat", options.logFormat)
+            }
+            if (wrapperStateIn != wrapperStateOut) {
+                options.writeWrapperState(containerId, wrapperStateOut)
+            }
             val hostUuid = buildString {
                 append(containerId.substring(0, 8))
                 append("-")
@@ -242,27 +258,32 @@ class CreateCommand : CliktCommand("create") {
     }
 
     private fun callOciJail(): JailParameters = runBlocking {
-        val rc = ProcessBuilder(
-            buildList {
-                add(options.ociJailBin.pathString)
-                add("create")
-                add("--bundle")
-                add(bundle.pathString)
-                consoleSocket?.let {
-                    add("--console-socket")
-                    add(it.pathString)
-                }
-                pidFile?.let {
-                    add("--pid-file")
-                    add(it.pathString)
-                }
-                preserveFds?.let {
-                    add("--preserve-fds")
-                    add(it.toString())
-                }
-                add(containerId)
+        val args = buildList {
+            add(options.ociJailBin.pathString)
+            add("create")
+            add("--bundle")
+            add(bundle.pathString)
+            consoleSocket?.let {
+                add("--console-socket")
+                add(it.pathString)
             }
-        ).inheritIO().start().waitFor()
+            pidFile?.let {
+                add("--pid-file")
+                add(it.pathString)
+            }
+            preserveFds?.let {
+                add("--preserve-fds")
+                add(it.toString())
+            }
+            add(containerId)
+        }
+        trace(1, args)
+        options.ociLogger.close()
+        val rc = try {
+            ProcessBuilder(args).inheritIO().start().waitFor()
+        } finally {
+            options.ociLogger.open()
+        }
         require(rc == 0) { "ocijail terminated with exit code $rc" }
         readJailParameters().singleOrNull { jail ->
             jail.name == containerId

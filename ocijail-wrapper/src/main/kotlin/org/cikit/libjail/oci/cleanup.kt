@@ -5,7 +5,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import org.cikit.libjail.*
-import kotlin.random.Random
 
 suspend fun cleanup(jail: JailParameters): Int {
     var rcAll = 0
@@ -57,34 +56,12 @@ suspend fun cleanup(jail: JailParameters): Int {
         }
     }
 
-    val vm = listVms().firstOrNull()
-    val haveVmm = if (vm != null) {
-        // load native vmmapi library
-        val randomHex = Random.nextBytes(4)
-            .joinToString("") { it.toString(16) }
-        try {
-            val ctx = vmOpenOrNull("vm-$randomHex")
-            if (ctx != null) {
-                vmClose(ctx)
-            }
-        } catch (ex: Throwable) {
-            trace(
-                0,
-                "warn:",
-                "error loading libvmmapi:",
-                ex.message
-            )
-        }
-        true
-    } else {
-        false
-    }
+    val vmmDevices = listVms().toSet()
 
     var mounted = readMountInfo()
 
     if (isJailed()) {
         // get entries including fsid for filesystems mounted by us
-        trace(2, "sysctlbyname($OID_JAIL_MNT_INFO)")
         val allMountedByUs = readJailMountInfo()
         if (allMountedByUs == null) {
             trace(0, "warn:", "jail_mntinfo not available")
@@ -121,7 +98,7 @@ suspend fun cleanup(jail: JailParameters): Int {
         }
     }
 
-    if (probeNullFs.isEmpty() && !haveVmm) {
+    if (probeNullFs.isEmpty() && vmmDevices.isEmpty()) {
         return rcAll
     }
 
@@ -153,9 +130,9 @@ suspend fun cleanup(jail: JailParameters): Int {
         rcAll = 1
     }
 
-    if (haveVmm) {
+    if (vmmDevices.isNotEmpty()) {
         try {
-            val rc = cleanupVmmDevicesAttached()
+            val rc = cleanupVmmDevicesAttached(vmmDevices)
             if (rc != 0) {
                 rcAll = 1
             }
@@ -225,27 +202,16 @@ private fun cleanupMounts(
     mounted: List<MountInfo>,
 ): Set<MountInfo> {
     val prefix = jail.path + "/"
-    var devFsNode = jail.path + "/dev"
-    val unmount = mounted.filter { mount ->
-        if (mount.node == devFsNode) {
-            // skip first devfs
-            devFsNode = ""
-            false
-        } else {
-            mount.node.startsWith(prefix)
-        }
-    }
+    val unmount = mounted.filter { mount -> mount.node.startsWith(prefix) }
     val unmounted = mutableSetOf<MountInfo>()
     for (mount in unmount.reversed()) {
         try {
             trace(1, "unmounting ${mount.node.removePrefix(jail.path)}")
             mount.parseFsId()
                 ?.let {
-                    trace(2, "unmount(${it.encodeToDecimalFsId()}, MNT_FORCE)")
                     unmount(it, force = true)
                 }
                 ?: run {
-                    trace(2, "unmount(${mount.node}, MNT_FORCE)")
                     unmount(mount.node, force = true)
                 }
             unmounted += mount
@@ -301,11 +267,9 @@ private fun cleanupMountsAttached(mounted: List<MountInfo>): Int {
             trace(1, "unmounting ${mount.node}")
             mount.parseFsId()
                 ?.let {
-                    trace(2, "unmount(${it.encodeToDecimalFsId()}, MNT_FORCE)")
                     unmount(it, force = true)
                 }
                 ?: run {
-                    trace(2, "unmount(${mount.node}, MNT_FORCE)")
                     unmount(mount.node, force = true)
                 }
         } catch (ex: Exception) {
@@ -321,13 +285,20 @@ private fun cleanupMountsAttached(mounted: List<MountInfo>): Int {
     return rcAll
 }
 
-private fun cleanupVmmDevicesAttached(): Int {
+private fun cleanupVmmDevicesAttached(vmmDevices: Set<String>): Int {
     var rcAll = 0
-    for (vm in listVms()) {
+    for (vm in vmmDevices) {
         try {
-            trace(1, "destroying vmm device \"$vm\"")
-            val ctx = vmOpen(vm)
-            vmDestroy(ctx)
+            // probe vm_destroy and see if we have access
+            when (vmDestroy(vm)) {
+                is VmDestroyResult.NoPermission -> { /* ignore this vm */ }
+                is VmDestroyResult.NotFound -> {
+                    trace(0, "warn:", "vm \"$vm\" disappeared while cleaning")
+                }
+                is VmDestroyResult.Ok -> {
+                    trace(1, "destroyed vmm device \"$vm\"")
+                }
+            }
         } catch (ex: Exception) {
             trace(
                 0,

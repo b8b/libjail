@@ -6,10 +6,8 @@ import com.github.ajalt.clikt.core.PrintMessage
 import com.github.ajalt.clikt.core.theme
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
-import com.github.ajalt.clikt.parameters.types.int
 import kotlinx.coroutines.runBlocking
 import org.cikit.libjail.readJailParameters
-import org.cikit.libjail.setLogLevel
 import kotlin.system.exitProcess
 
 class CleanupCommand : CliktCommand("cleanup") {
@@ -22,10 +20,7 @@ class CleanupCommand : CliktCommand("cleanup") {
         help = "Unique identifier for the jail"
     ).required()
 
-    private val logLevel by option().int()
-
     override fun run() {
-        setLogLevel(logLevel ?: 0)
         runBlocking {
             val jails = readJailParameters()
             val parameters = jails.singleOrNull { p ->

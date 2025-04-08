@@ -1,12 +1,25 @@
 package org.cikit.libjail
 
-import com.sun.jna.Native
-import com.sun.jna.Pointer
 import kotlin.io.path.*
 
 class VmContext(internal val opaque: Any?)
 
 private val vmmPath = Path("/dev/vmm")
+
+private const val OID_VMM_CREATE = "hw.vmm.create"
+private const val OID_VMM_DESTROY = "hw.vmm.destroy"
+
+sealed class VmCreateResult(val error: Int) {
+    data object Ok :           VmCreateResult(0)
+    data object NoPermission : VmCreateResult(1  /* EPERM   */)
+    data object Exists :       VmCreateResult(17 /* EEXISTS */)
+}
+
+sealed class VmDestroyResult(val error: Int) {
+    data object Ok :           VmDestroyResult(0)
+    data object NoPermission : VmDestroyResult(1  /* EPERM   */)
+    data object NotFound :     VmDestroyResult(2  /* ENOENT  */)
+}
 
 fun listVms(): List<String> {
     if (vmmPath.isDirectory()) {
@@ -17,38 +30,27 @@ fun listVms(): List<String> {
     return emptyList()
 }
 
-fun vmOpenOrNull(name: String): VmContext? {
-    val result = FREEBSD_LIBVMM.vm_open(name)
-    if (result == null) {
-        val errnum = Native.getLastError()
-        if (errnum == 2 /* ENOENT */) {
-            return null
+fun vmCreate(name: String): VmCreateResult {
+    var result: VmCreateResult = VmCreateResult.Ok
+    sysctlByNameString(OID_VMM_CREATE, name) { cmd, rc ->
+        result = when (rc) {
+            1  /* EPERM  */ -> VmCreateResult.NoPermission
+            17 /* EEXIST */ -> VmCreateResult.Exists
+            else -> error("$cmd(): error code $rc")
         }
-        error("vm_open(): error code $errnum")
     }
-    return VmContext(result)
+    return result
 }
 
-fun vmOpen(name: String): VmContext {
-    val result = FREEBSD_LIBVMM.vm_open(name)
-        ?: error("vm_open(): error code ${Native.getLastError()}")
-    return VmContext(result)
-}
-
-fun vmClose(ctx: VmContext) {
-    FREEBSD_LIBVMM.vm_close(ctx.opaque as Pointer)
-}
-
-fun vmDestroy(ctx: VmContext) {
-    FREEBSD_LIBVMM.vm_destroy(ctx.opaque as Pointer)
-}
-
-private interface FreeBSDLibVmm : com.sun.jna.Library {
-    fun vm_open(name: String): Pointer?
-    fun vm_close(ctx: Pointer?)
-    fun vm_destroy(p: Pointer)
-}
-
-private val FREEBSD_LIBVMM by lazy {
-    Native.load("vmmapi", FreeBSDLibVmm::class.java)
+fun vmDestroy(name: String): VmDestroyResult {
+    var result: VmDestroyResult = VmDestroyResult.Ok
+    sysctlByNameString(OID_VMM_DESTROY, name) { cmd, rc ->
+        result = when (rc) {
+            1  /* EPERM  */ -> VmDestroyResult.NoPermission
+            2  /* ENOENT */ -> VmDestroyResult.NotFound
+            22 /* EINVAL */ -> VmDestroyResult.NotFound
+            else -> error("$cmd(): error code $rc")
+        }
+    }
+    return result
 }

@@ -32,6 +32,7 @@ suspend fun modifyJailParameters(jail: JailParameters, parameters: Map<String, S
 }
 
 fun jailAttach(jail: JailParameters) {
+    trace(3, "jail_attach(", jail.jid.toString(), "/* ${jail.name} */", ")")
     val rc = FREEBSD_LIBC.jail_attach(jail.jid)
     if (rc != 0) {
         error("jail_attach(): error code ${Native.getLastError()}")
@@ -39,6 +40,7 @@ fun jailAttach(jail: JailParameters) {
 }
 
 fun jailRemove(jail: JailParameters) {
+    trace(3, "jail_remove(", jail.jid.toString(), "/* ${jail.name} */", ")")
     val rc = FREEBSD_LIBC.jail_remove(jail.jid)
     if (rc != 0) {
         error("jail_remove(): error code ${Native.getLastError()}")

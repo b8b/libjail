@@ -9,15 +9,31 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
+sealed class TraceEvent {
+    class Msg(val level: Int, val msg: String) : TraceEvent() {
+        val levelString = when (level) {
+            0 -> "warn"
+            1 -> "info"
+            else -> "debug"
+        }
+    }
+}
+
+enum class TraceControl {
+    ACCEPT,
+    REJECT,
+}
 
 internal val json = Json {
     ignoreUnknownKeys = true
 }
 
-private var logLevel = 0
+private val traceFunctions = ArrayDeque<(TraceEvent) -> TraceControl>()
 
-fun setLogLevel(level: Int) {
-    logLevel = level
+fun registerTraceFunction(traceFunction: (TraceEvent) -> TraceControl) {
+    synchronized(traceFunctions) {
+        traceFunctions.addFirst(traceFunction)
+    }
 }
 
 fun trace(level: Int, vararg args: String?) {
@@ -25,13 +41,30 @@ fun trace(level: Int, vararg args: String?) {
 }
 
 fun trace(level: Int, args: List<String>) {
-    when (level) {
-        0 -> System.err.println(args.joinToString(" "))
-        else -> if (logLevel >= level) {
-            if (level > 1) {
-                System.err.println("+ ${args.joinToString(" ")}")
-            } else {
-                System.err.println(args.joinToString(" "))
+    val line = if (level > 1) {
+        "+ ${args.joinToString(" ")}"
+    } else {
+        args.joinToString(" ")
+    }
+    val ev = TraceEvent.Msg(level, line)
+    trace(ev)
+}
+
+fun trace(ev: TraceEvent) {
+    synchronized(traceFunctions) {
+        var i = 0
+        while (i < traceFunctions.size) {
+            val f = traceFunctions[i++]
+            val control = f(ev)
+            when (ev) {
+                is TraceEvent.Msg -> when (control) {
+                    TraceControl.ACCEPT -> {
+                        //ignore
+                    }
+                    TraceControl.REJECT -> {
+                        break
+                    }
+                }
             }
         }
     }

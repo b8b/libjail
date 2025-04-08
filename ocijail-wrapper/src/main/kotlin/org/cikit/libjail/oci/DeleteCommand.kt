@@ -26,6 +26,8 @@ class DeleteCommand : CliktCommand("delete") {
     )
 
     override fun run() {
+        val wrapperState = options.readWrapperState(containerId)
+        wrapperState?.let { options.ociLogger.restoreState(it) }
         val state = options.readOciJailState(containerId)
             ?: exitProcess(EXIT_UNHANDLED)
         val status = state["status"]?.jsonPrimitive?.content ?: "unknown"
@@ -36,8 +38,8 @@ class DeleteCommand : CliktCommand("delete") {
         }
         if (!canDelete) {
             throw PrintMessage(
-                "delete: container not in \"stopped\" or \"created\" state " +
-                        "(currently $status)",
+                "delete: container not in \"stopped\" or \"created\" " +
+                        "state (currently $status)",
                 1,
                 printError = true
             )
@@ -48,6 +50,7 @@ class DeleteCommand : CliktCommand("delete") {
                 p.name == containerId || p.jid == containerId.toIntOrNull()
             }
             if (jail == null) {
+                options.deleteWrapperState(containerId)
                 exitProcess(EXIT_UNHANDLED)
             }
             try {
@@ -59,6 +62,7 @@ class DeleteCommand : CliktCommand("delete") {
                     printError = true
                 )
             }
+            options.deleteWrapperState(containerId)
             exitProcess(EXIT_UNHANDLED)
         }
     }

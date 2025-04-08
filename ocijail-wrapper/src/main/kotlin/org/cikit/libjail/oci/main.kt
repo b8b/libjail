@@ -85,17 +85,24 @@ package org.cikit.libjail.oci
 import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.groups.OptionGroup
 import com.github.ajalt.clikt.parameters.groups.provideDelegate
+import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.help
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
 import kotlinx.serialization.json.*
+import org.cikit.libjail.TraceControl
+import org.cikit.libjail.TraceEvent
+import org.cikit.libjail.registerTraceFunction
+import java.io.BufferedWriter
+import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.time.OffsetDateTime
+import kotlin.concurrent.thread
 import kotlin.io.path.*
-import kotlin.io.use
 import kotlin.system.exitProcess
 
 val json = Json {
@@ -121,13 +128,14 @@ data class GlobalOptions(
     val logFormat: String?,
     val logLevel: String?,
     val logFile: Path?,
+    val localStateDir: Path,
     val devFsRulesetVnet: Long = 5,
     val devFsRulesetVmm: Long = 25,
-    val sshKeyGenCaCert: Path? = null
+    val ociLogger: OciLogger
 ) {
     fun readOciJailState(containerId: String): JsonObject? {
         val lockFile = root / containerId / ociJailStateLock
-        if (!lockFile.parent.exists()) {
+        if (lockFile.parent?.exists() != true) {
             return null
         }
         val stateFile = root / containerId / ociJailStateFile
@@ -146,7 +154,165 @@ data class GlobalOptions(
                 }
             }
         }
-        return Json.decodeFromString(stateJson)
+        return if (stateJson.isBlank()) {
+            null
+        } else {
+            json.decodeFromString(stateJson)
+        }
+    }
+
+    fun readWrapperState(containerId: String): JsonObject? {
+        val stateFile = localStateDir / "$containerId.json"
+        if (stateFile.parent?.exists() != true) {
+            return null
+        }
+        val stateJson = FileChannel.open(
+            stateFile,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.READ,
+            StandardOpenOption.WRITE
+        ).use { fc ->
+            fc.lock().use { lock ->
+                require(lock.isValid) { "error locking $stateFile" }
+                if (stateFile.isReadable()) {
+                    stateFile.readText()
+                } else {
+                    return null
+                }
+            }
+        }
+        return if (stateJson.isBlank()) {
+            null
+        } else {
+            json.decodeFromString(stateJson)
+        }
+    }
+
+    fun writeWrapperState(containerId: String, state: JsonObject) {
+        val stateJson = json.encodeToString(state)
+        val stateFile = localStateDir / "$containerId.json"
+        stateFile.parent?.let {
+            if (!it.exists()) {
+                it.createDirectories()
+            }
+        }
+        FileChannel.open(
+            stateFile,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.READ,
+            StandardOpenOption.WRITE,
+        ).use { fc ->
+            fc.lock().use { lock ->
+                require(lock.isValid) { "error locking $stateFile" }
+                fc.truncate(0L)
+                fc.write(ByteBuffer.wrap(stateJson.encodeToByteArray()))
+            }
+        }
+    }
+
+    fun deleteWrapperState(containerId: String) {
+        val stateFile = localStateDir / "$containerId.json"
+        if (stateFile.exists()) {
+            stateFile.deleteIfExists()
+        }
+    }
+}
+
+class OciLogger(
+    private var logFile: String?,
+    private var logFormat: String?,
+    private var logLevel: String?
+
+) {
+    private object Lock
+
+    private var w: BufferedWriter? = null
+    private var logToConsole = logFile == null
+
+    private val shutdownHook = thread(start = false) {
+        w?.close()
+    }
+
+    init {
+        open()
+        Runtime.getRuntime().addShutdownHook(
+            shutdownHook
+        )
+        registerTraceFunction { ev ->
+            synchronized(Lock) {
+                if (logToConsole) {
+                    if (ev is TraceEvent.Msg) {
+                        val finalLogLevel = when (logLevel) {
+                            "0", "info" -> 1
+                            "1", "warn" -> 0
+                            "2", "debug" -> 3
+                            else -> 1
+                        }
+                        if (ev.level <= finalLogLevel) {
+                            System.err.println(ev.msg)
+                        }
+                    }
+                } else {
+                    val writer = w ?: return@synchronized
+                    if (ev is TraceEvent.Msg) {
+                        val line = if (logFormat == "json") {
+                            json.encodeToString(
+                                buildJsonObject {
+                                    put("msg", ev.msg)
+                                    put("level", ev.levelString)
+                                    put("time", OffsetDateTime.now().toString())
+                                }
+                            )
+                        } else {
+                            ev.msg
+                        }
+                        writer.appendLine(line)
+                        writer.flush()
+                    }
+                }
+            }
+            TraceControl.ACCEPT
+        }
+    }
+
+    fun restoreState(state: JsonObject) {
+        synchronized(Lock) {
+            if (logLevel == null) {
+                logLevel = (state["logLevel"] as? JsonPrimitive)?.content
+            }
+            if (logFormat == null) {
+                logFormat = (state["logFormat"] as? JsonPrimitive)?.content
+            }
+            if (logFile == null) {
+                logFile = (state["logFile"] as? JsonPrimitive)?.content
+                if (logFile != null) {
+                    logToConsole = false
+                    open()
+                } else {
+                    logToConsole = true
+                }
+            }
+        }
+    }
+
+    fun open() {
+        synchronized(Lock) {
+            w?.close()
+            w = logFile?.let { Path(it) }?.bufferedWriter(
+                options = arrayOf(
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE,
+                    StandardOpenOption.APPEND,
+                )
+            )
+        }
+    }
+
+    fun close() {
+        synchronized(Lock) {
+            w?.close()
+            w = null
+        }
     }
 }
 
@@ -169,6 +335,11 @@ class GlobalCommandOptions : OptionGroup(name = "Global Options") {
     private val log by option()
         .help("Log file")
 
+    private val localStateDir by option()
+        .help("Override default location for wrapper state database")
+        .path(canBeFile = false)
+        .default(Path("/var/run/ocijail-wrapper"))
+
     private val devFsRulesetVnet by option()
         .help("Use the specified devfs ruleset for vnet jails")
         .long()
@@ -177,19 +348,20 @@ class GlobalCommandOptions : OptionGroup(name = "Global Options") {
         .help("Use the specified devfs ruleset for vmm jails")
         .long()
 
-    private val sshKeyGenCaCert by option()
-        .help("Setup a pre-signed ssh host key for each container")
-        .path(mustExist = true, canBeDir = false)
-
-    fun getGlobalOptions() = GlobalOptions(
+    fun getGlobalOptions(): GlobalOptions = GlobalOptions(
         ociJailBin = ociJailBin ?: Path(ociJailBinDefault),
         root = root ?: Path(ociJailStateBaseDefault),
         logFormat = logFormat,
         logLevel = logLevel,
         logFile = log?.let { Path(it) },
+        localStateDir = localStateDir,
         devFsRulesetVnet = devFsRulesetVnet ?: 5L,
         devFsRulesetVmm = devFsRulesetVmm ?: 25L,
-        sshKeyGenCaCert = sshKeyGenCaCert
+        ociLogger = OciLogger(
+            logFile = log,
+            logFormat = logFormat,
+            logLevel = logLevel
+        )
     )
 }
 
@@ -224,8 +396,9 @@ private class OciRuntimeCommand : CliktCommand("ocijail-wrapper") {
         if (version) {
             exitProcess(EXIT_UNHANDLED)
         }
+        val globalOptions = globalOptions.getGlobalOptions()
         currentContext.findOrSetObject {
-            globalOptions.getGlobalOptions()
+            globalOptions
         }
     }
 }

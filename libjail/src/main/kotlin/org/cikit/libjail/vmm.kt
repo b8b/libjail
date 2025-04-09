@@ -46,6 +46,7 @@ fun vmDestroy(name: String): VmDestroyResult {
         result = when (rc) {
             1  /* EPERM  */ -> VmDestroyResult.NoPermission
             2  /* ENOENT */ -> VmDestroyResult.NotFound
+            22 /* EINVAL */ -> VmDestroyResult.NoPermission
             else -> error("$cmd(): error code $rc")
         }
     }

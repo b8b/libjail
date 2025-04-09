@@ -123,12 +123,7 @@ fun nmount(
         }
         putAll(args)
     }
-    trace(
-        3,
-        "nmount(",
-        allArgs.entries.joinToString(", ") { (k, v) -> "$k=$v" },
-        ")"
-    )
+    trace(TraceEvent.Ffi("nmount", allArgs.entries.map { (k, v) -> "$k=$v" }))
     val iov = allArgs.toIov()
     var flags = 0L
     if (readOnly) {
@@ -153,7 +148,7 @@ fun unmount(
         flags = flags or MNT_FORCE
     }
     val decimalFsId = fsId.encodeToDecimalFsId()
-    trace(3, "unmount(", decimalFsId, flags.toString(), ")")
+    trace(TraceEvent.Ffi("unmount", decimalFsId, flags.toString()))
     val rc = FREEBSD_LIBC.unmount(decimalFsId, (flags and 0xFFFFFFFF).toInt())
     if (rc != 0) {
         errorHandler("unmount", Native.getLastError())
@@ -169,7 +164,7 @@ fun unmount(
     if (force) {
         flags = flags or MNT_FORCE
     }
-    trace(3, "unmount(", dir, flags.toString(), ")")
+    trace(TraceEvent.Ffi("unmount", dir, flags.toString()))
     val rc = FREEBSD_LIBC.unmount(dir, (flags and 0xFFFFFFFF).toInt())
     if (rc != 0) {
         errorHandler("unmount", Native.getLastError())

@@ -2,8 +2,6 @@ package org.cikit.libjail
 
 import kotlin.io.path.*
 
-class VmContext(internal val opaque: Any?)
-
 private val vmmPath = Path("/dev/vmm")
 
 private const val OID_VMM_CREATE = "hw.vmm.create"
@@ -48,7 +46,6 @@ fun vmDestroy(name: String): VmDestroyResult {
         result = when (rc) {
             1  /* EPERM  */ -> VmDestroyResult.NoPermission
             2  /* ENOENT */ -> VmDestroyResult.NotFound
-            22 /* EINVAL */ -> VmDestroyResult.NotFound
             else -> error("$cmd(): error code $rc")
         }
     }

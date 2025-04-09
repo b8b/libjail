@@ -54,7 +54,7 @@ class DeleteCommand : CliktCommand("delete") {
                 exitProcess(EXIT_UNHANDLED)
             }
             try {
-                cleanup(jail)
+                cleanup(options.ociLogger, jail)
             } catch (ex: Throwable) {
                 throw PrintMessage(
                     "delete failed: ${ex.message}",

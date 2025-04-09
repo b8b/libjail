@@ -68,6 +68,8 @@ fi
 ///INC=../../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/vnet.kt
 
 ///INC=OciConfig.kt
+///INC=OciLogger.kt
+
 ///INC=cleanup.kt
 ///INC=CleanupCommand.kt
 ///INC=CreateCommand.kt
@@ -92,16 +94,10 @@ import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
 import kotlinx.serialization.json.*
-import org.cikit.libjail.TraceControl
-import org.cikit.libjail.TraceEvent
-import org.cikit.libjail.registerTraceFunction
-import java.io.BufferedWriter
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
-import java.time.OffsetDateTime
-import kotlin.concurrent.thread
 import kotlin.io.path.*
 import kotlin.system.exitProcess
 
@@ -214,104 +210,6 @@ data class GlobalOptions(
         val stateFile = localStateDir / "$containerId.json"
         if (stateFile.exists()) {
             stateFile.deleteIfExists()
-        }
-    }
-}
-
-class OciLogger(
-    private var logFile: String?,
-    private var logFormat: String?,
-    private var logLevel: String?
-
-) {
-    private object Lock
-
-    private var w: BufferedWriter? = null
-    private var logToConsole = logFile == null
-
-    private val shutdownHook = thread(start = false) {
-        w?.close()
-    }
-
-    init {
-        open()
-        Runtime.getRuntime().addShutdownHook(
-            shutdownHook
-        )
-        registerTraceFunction { ev ->
-            synchronized(Lock) {
-                if (logToConsole) {
-                    if (ev is TraceEvent.Msg) {
-                        val finalLogLevel = when (logLevel) {
-                            "0", "info" -> 1
-                            "1", "warn" -> 0
-                            "2", "debug" -> 3
-                            else -> 1
-                        }
-                        if (ev.level <= finalLogLevel) {
-                            System.err.println(ev.msg)
-                        }
-                    }
-                } else {
-                    val writer = w ?: return@synchronized
-                    if (ev is TraceEvent.Msg) {
-                        val line = if (logFormat == "json") {
-                            json.encodeToString(
-                                buildJsonObject {
-                                    put("msg", ev.msg)
-                                    put("level", ev.levelString)
-                                    put("time", OffsetDateTime.now().toString())
-                                }
-                            )
-                        } else {
-                            ev.msg
-                        }
-                        writer.appendLine(line)
-                        writer.flush()
-                    }
-                }
-            }
-            TraceControl.ACCEPT
-        }
-    }
-
-    fun restoreState(state: JsonObject) {
-        synchronized(Lock) {
-            if (logLevel == null) {
-                logLevel = (state["logLevel"] as? JsonPrimitive)?.content
-            }
-            if (logFormat == null) {
-                logFormat = (state["logFormat"] as? JsonPrimitive)?.content
-            }
-            if (logFile == null) {
-                logFile = (state["logFile"] as? JsonPrimitive)?.content
-                if (logFile != null) {
-                    logToConsole = false
-                    open()
-                } else {
-                    logToConsole = true
-                }
-            }
-        }
-    }
-
-    fun open() {
-        synchronized(Lock) {
-            w?.close()
-            w = logFile?.let { Path(it) }?.bufferedWriter(
-                options = arrayOf(
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.WRITE,
-                    StandardOpenOption.APPEND,
-                )
-            )
-        }
-    }
-
-    fun close() {
-        synchronized(Lock) {
-            w?.close()
-            w = null
         }
     }
 }

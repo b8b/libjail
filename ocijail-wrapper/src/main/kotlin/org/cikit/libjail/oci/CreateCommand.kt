@@ -81,9 +81,12 @@ class CreateCommand : CliktCommand("create") {
             val ociConfigFile = bundle.resolve("config.json")
             val ociConfigJson = ociConfigFile.readText()
             val ociConfig = json.decodeFromString<OciConfig>(ociConfigJson)
+            options.ociLogger.info("loaded oci config: $ociConfigJson")
 
             val patchedConfig = patchConfig(ociConfig)
-            ociConfigFile.writeText(json.encodeToString(patchedConfig))
+            val patchedConfigJson = json.encodeToString(patchedConfig)
+            ociConfigFile.writeText(patchedConfigJson)
+            options.ociLogger.info("patched oci config: $patchedConfigJson")
 
             if (patchedConfig.annotations[OCI_ANNOTATION_VNET] == "new") {
                 startNetGraph()
@@ -104,6 +107,7 @@ class CreateCommand : CliktCommand("create") {
             val jail = callOciJail()
 
             runBlocking {
+                options.ociLogger.info("modifying jail parameters")
                 modifyJailParameters(
                     jail,
                     buildMap {
@@ -132,6 +136,7 @@ class CreateCommand : CliktCommand("create") {
                 .containsKey("$OCI_ANNOTATION_ALLOW.vmm")
             if (!hasVmmAllow && vmmAllowed()) {
                 // automatically inherit parent jail's setting
+                options.ociLogger.info("inheriting allow.vmm from parent")
                 patchedConfig = patchedConfig.copy(
                     annotations = patchedConfig.annotations + mapOf(
                         "$OCI_ANNOTATION_ALLOW.vmm" to "1"
@@ -154,8 +159,9 @@ class CreateCommand : CliktCommand("create") {
             val mounted = readJailMountInfo()
             if (mounted == null) {
                 //TBD fail here
-                trace(0, "warn:", "jail_mntinfo not available")
-                trace(0, "removing nullfs file mounts")
+                options.ociLogger.warn(
+                    "jail_mntinfo not available: removing nullfs mounts"
+                )
                 patchedConfig = patchedConfig.copy(
                     mounts = patchedConfig.mounts.filterNot { mount ->
                         mount.type == "nullfs" &&
@@ -214,12 +220,15 @@ class CreateCommand : CliktCommand("create") {
     }
 
     private fun startNetGraph() {
-        val netGraphLoaded = ProcessBuilder("kldstat", "-qm", "netgraph")
+        val args = listOf("kldstat", "-qm", "netgraph")
+        options.ociLogger.trace(TraceEvent.Exec(args))
+        val netGraphLoaded = ProcessBuilder(args)
             .inheritIO()
             .redirectInput(ProcessBuilder.Redirect.PIPE)
             .start()
             .waitFor() == 0
         if (netGraphLoaded) {
+            options.ociLogger.trace(TraceEvent.Exec("ngctl", "list"))
             val rc = ProcessBuilder("ngctl", "list")
                 .inheritIO()
                 .redirectInput(ProcessBuilder.Redirect.PIPE)
@@ -233,7 +242,9 @@ class CreateCommand : CliktCommand("create") {
     }
 
     private fun listDevFsRulesets(): Set<Long> {
-        val p = ProcessBuilder("devfs", "rule", "showsets")
+        val args = listOf("devfs", "rule", "showsets")
+        options.ociLogger.trace(TraceEvent.Exec(args))
+        val p = ProcessBuilder(args)
             .inheritIO()
             .redirectOutput(ProcessBuilder.Redirect.PIPE)
             .start()
@@ -246,7 +257,9 @@ class CreateCommand : CliktCommand("create") {
     }
 
     private fun restartDevFs() {
-        val rc = ProcessBuilder("/etc/rc.d/devfs", "forcerestart")
+        val args = listOf("/etc/rc.d/devfs", "forcerestart")
+        options.ociLogger.trace(TraceEvent.Exec(args))
+        val rc = ProcessBuilder(args)
             .inheritIO()
             .start()
             .waitFor()
@@ -277,7 +290,7 @@ class CreateCommand : CliktCommand("create") {
             }
             add(containerId)
         }
-        trace(1, args)
+        options.ociLogger.trace(TraceEvent.Exec(args))
         options.ociLogger.close()
         val rc = try {
             ProcessBuilder(args).inheritIO().start().waitFor()

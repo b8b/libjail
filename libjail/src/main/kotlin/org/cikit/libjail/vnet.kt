@@ -4,6 +4,7 @@ data class NetifParameters(
     val name: String,
     val description: String,
     val driverName: String,
+    val lines: List<String>
 )
 
 suspend fun readNetifParameters(
@@ -19,6 +20,7 @@ suspend fun readNetifParameters(
     var ifName = ""
     var description = ""
     var driverName = ""
+    val lines = mutableListOf<String>()
     for (line in output.split("\n")) {
         when {
             line.trim().startsWith("description:") -> {
@@ -36,10 +38,16 @@ suspend fun readNetifParameters(
                         networkInterfaces += NetifParameters(
                             name = ifName,
                             description = description,
-                            driverName = driverName
+                            driverName = driverName,
+                            lines = lines.toList()
                         )
                     }
                     ifName = maybeIfName
+                    description = ""
+                    driverName = ""
+                    lines.clear()
+                } else {
+                    lines += line.trim()
                 }
             }
         }
@@ -48,7 +56,8 @@ suspend fun readNetifParameters(
         networkInterfaces += NetifParameters(
             name = ifName,
             description = description,
-            driverName = driverName
+            driverName = driverName,
+            lines = lines.toList()
         )
     }
     return networkInterfaces

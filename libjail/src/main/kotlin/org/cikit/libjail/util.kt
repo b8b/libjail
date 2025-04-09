@@ -12,18 +12,30 @@ import kotlinx.serialization.json.Json
 
 
 sealed class TraceEvent {
-    class Msg(val level: Int, val msg: String) : TraceEvent() {
-        val levelString = when (level) {
-            0 -> "warn"
-            1 -> "info"
-            else -> "debug"
-        }
+    class Ffi(
+        val func: String,
+        val args: List<String> = emptyList()
+    ) : TraceEvent() {
+        constructor(
+            func: String,
+            vararg arg: String
+        ) : this(func, arg.toList())
     }
+
+    class Exec(
+        val args: List<String>
+    ) : TraceEvent() {
+        constructor(vararg arg: String) : this(arg.toList())
+    }
+
+    class Info(val msg: String) : TraceEvent()
+    class Warn(val msg: String) : TraceEvent()
+    class Err(val msg: String, val ex: Throwable? = null) : TraceEvent()
 }
 
 enum class TraceControl {
-    ACCEPT,
-    REJECT,
+    CONTINUE,
+    DEREGISTER,
 }
 
 internal val json = Json {
@@ -38,6 +50,7 @@ fun registerTraceFunction(traceFunction: (TraceEvent) -> TraceControl) {
     }
 }
 
+/*
 fun trace(level: Int, vararg args: String?) {
     trace(level, args.filterNotNull())
 }
@@ -48,24 +61,22 @@ fun trace(level: Int, args: List<String>) {
     } else {
         args.joinToString(" ")
     }
-    val ev = TraceEvent.Msg(level, line)
+    val ev = TraceEvent.Info(level, line)
     trace(ev)
 }
 
-fun trace(ev: TraceEvent) {
+ */
+
+internal fun trace(ev: TraceEvent) {
     synchronized(traceFunctions) {
         var i = 0
         while (i < traceFunctions.size) {
             val f = traceFunctions[i++]
-            val control = f(ev)
-            when (ev) {
-                is TraceEvent.Msg -> when (control) {
-                    TraceControl.ACCEPT -> {
-                        //ignore
-                    }
-                    TraceControl.REJECT -> {
-                        break
-                    }
+            when (f(ev)) {
+                TraceControl.CONTINUE -> {}
+                TraceControl.DEREGISTER -> {
+                    traceFunctions.removeAt(i)
+                    i--
                 }
             }
         }
@@ -86,7 +97,7 @@ internal suspend fun pRead(
     args: List<String>,
     block: (List<String>, Int, String) -> Unit = defaultHandler
 ): String {
-    trace(2, args)
+    trace(TraceEvent.Exec(args))
     return withContext(Dispatchers.IO) {
         val p = ProcessBuilder(args).start()
         val errors = async {

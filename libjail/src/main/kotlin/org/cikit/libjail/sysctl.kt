@@ -12,7 +12,7 @@ fun sysctlByNameString(
     name: String,
     errorHandler: (String, Int) -> Unit = defaultErrorHandler
 ): String? {
-    trace(3, "sysctlbyname(", "\"$name\"", ")")
+    trace(TraceEvent.Ffi("sysctlbyname", "\"$name\""))
     val size = SizeTByReference(SizeT(0))
     if (FREEBSD_LIBC.sysctlbyname(name, null, size, null, null) != 0) {
         errorHandler("sysctlbyname", Native.getLastError())
@@ -31,7 +31,7 @@ fun sysctlByNameString(
     value: String,
     errorHandler: (String, Int) -> Unit = defaultErrorHandler
 ) {
-    trace(3, "sysctlbyname(", "\"$name\"", "=", "\"$value\"", ")")
+    trace(TraceEvent.Ffi("sysctlbyname", "\"$name\"=\"$value\""))
     val data = value.encodeToByteArray()
     val dataLen = data.size + 1L
     val valueMem = Memory(dataLen).apply {
@@ -49,7 +49,7 @@ fun sysctlByNameInt32(
     name: String,
     errorHandler: (String, Int) -> Unit = defaultErrorHandler
 ): Int? {
-    trace(3, "sysctlbyname(", "\"$name\"", ")")
+    trace(TraceEvent.Ffi("sysctlbyname", "\"$name\""))
     val size = SizeTByReference(SizeT(4))
     val buf = Memory(size.getValue().toLong())
     if (FREEBSD_LIBC.sysctlbyname(name, buf, size, null, null) != 0) {

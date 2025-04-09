@@ -1,9 +1,6 @@
 package org.cikit.libjail.oci
 
-import com.github.ajalt.clikt.core.CliktCommand
-import com.github.ajalt.clikt.core.Context
-import com.github.ajalt.clikt.core.PrintMessage
-import com.github.ajalt.clikt.core.theme
+import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
 import kotlinx.coroutines.runBlocking
@@ -15,6 +12,8 @@ class CleanupCommand : CliktCommand("cleanup") {
     override fun help(context: Context): String {
         return context.theme.info("Cleanup the jail with the given id")
     }
+
+    private val options by requireObject<GlobalOptions>()
 
     private val jail by option("-j",
         help = "Unique identifier for the jail"
@@ -28,7 +27,7 @@ class CleanupCommand : CliktCommand("cleanup") {
             }
             parameters?.let { p ->
                 try {
-                    val rc = cleanup(p)
+                    val rc = cleanup(options.ociLogger, p)
                     exitProcess(rc)
                 } catch (ex: Throwable) {
                     throw PrintMessage(

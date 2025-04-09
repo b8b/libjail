@@ -24,7 +24,10 @@ fun isJailed(): Boolean {
     return sysctlByNameInt32("security.jail.jailed") == 1
 }
 
-suspend fun modifyJailParameters(jail: JailParameters, parameters: Map<String, String>) {
+suspend fun modifyJailParameters(
+    jail: JailParameters,
+    parameters: Map<String, String>
+) {
     val args = parameters.entries
         .map { (k, v) -> "$k=$v" }
         .toTypedArray()
@@ -32,7 +35,7 @@ suspend fun modifyJailParameters(jail: JailParameters, parameters: Map<String, S
 }
 
 fun jailAttach(jail: JailParameters) {
-    trace(3, "jail_attach(", jail.jid.toString(), "/* ${jail.name} */", ")")
+    trace(TraceEvent.Ffi("jail_attach", "${jail.jid} /* ${jail.name} */"))
     val rc = FREEBSD_LIBC.jail_attach(jail.jid)
     if (rc != 0) {
         error("jail_attach(): error code ${Native.getLastError()}")
@@ -40,7 +43,7 @@ fun jailAttach(jail: JailParameters) {
 }
 
 fun jailRemove(jail: JailParameters) {
-    trace(3, "jail_remove(", jail.jid.toString(), "/* ${jail.name} */", ")")
+    trace(TraceEvent.Ffi("jail_remove", "${jail.jid} /* ${jail.name} */"))
     val rc = FREEBSD_LIBC.jail_remove(jail.jid)
     if (rc != 0) {
         error("jail_remove(): error code ${Native.getLastError()}")

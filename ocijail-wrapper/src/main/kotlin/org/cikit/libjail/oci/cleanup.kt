@@ -6,52 +6,37 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import org.cikit.libjail.*
 
-suspend fun cleanup(jail: JailParameters): Int {
+suspend fun cleanup(log: OciLogger, jail: JailParameters): Int {
     var rcAll = 0
 
     try {
         withTimeout(30_000L) {
-            trace(1, "killing processes")
+            log.info("killing processes")
             kill(jail)
         }
     } catch (ex: Throwable) {
-        trace(
-            0,
-            "warn:",
-            "error killing processes:",
-            ex.message
-        )
+        log.error("error killing processes", ex)
         rcAll = 1
     }
 
     try {
-        val rc = cleanupJails(jail)
+        val rc = cleanupJails(log, jail)
         if (rc != 0) {
             rcAll = 1
         }
     } catch (ex: Throwable) {
-        trace(
-            0,
-            "warn:",
-            "error removing nested jails:",
-            ex.message
-        )
+        log.error("error removing nested jails", ex)
         rcAll = 1
     }
 
     if (jail.parameters["vnet"] == JsonPrimitive("new")) {
         try {
-            val rc = cleanupInterfaces(jail)
+            val rc = cleanupInterfaces(log, jail)
             if (rc != 0) {
                 rcAll = 1
             }
         } catch (ex: Throwable) {
-            trace(
-                0,
-                "warn:",
-                "error removing interfaces:",
-                ex.message
-            )
+            log.error("error removing interfaces", ex)
             rcAll = 1
         }
     }
@@ -64,21 +49,16 @@ suspend fun cleanup(jail: JailParameters): Int {
         // get entries including fsid for filesystems mounted by us
         val allMountedByUs = readJailMountInfo()
         if (allMountedByUs == null) {
-            trace(0, "warn:", "jail_mntinfo not available")
+            log.warn("jail_mntinfo kernel module not available")
         } else {
             mounted = allMountedByUs
         }
     }
 
     val unmounted: Set<MountInfo> = try {
-        cleanupMounts(jail, mounted)
+        cleanupMounts(log, jail, mounted)
     } catch (ex: Throwable) {
-        trace(
-            0,
-            "warn:",
-            "error unmounting filesystems:",
-            ex.message
-        )
+        log.error("error unmounting filesystems", ex)
         rcAll = 1
         emptySet()
     }
@@ -103,7 +83,7 @@ suspend fun cleanup(jail: JailParameters): Int {
     }
 
     try {
-        trace(1, "attaching to jail")
+        log.info("attaching to jail")
         jailAttach(jail)
     } catch (ex: Exception) {
         throw RuntimeException("failed to attach to jail", ex)
@@ -112,31 +92,27 @@ suspend fun cleanup(jail: JailParameters): Int {
     try {
         val allMountedByJail = readJailMountInfo()
         val rc = if (allMountedByJail == null) {
-            trace(0, "warn:", "probe unmounting nullfs mounts")
-            probeUnmountAttached(probeNullFs)
+            log.warn("probe unmounting nullfs mounts")
+            probeUnmountAttached(log, probeNullFs)
         } else {
-            cleanupMountsAttached(allMountedByJail)
+            cleanupMountsAttached(log, allMountedByJail)
         }
         if (rc != 0) {
             rcAll = 1
         }
     } catch (ex: Throwable) {
-        trace(
-            0,
-            "warn:",
-            "error unmounting filesystems:",
-            ex.message
-        )
+        log.error("error unmounting filesystems", ex)
         rcAll = 1
     }
 
     if (vmmDevices.isNotEmpty()) {
         try {
-            val rc = cleanupVmmDevicesAttached(vmmDevices)
+            val rc = cleanupVmmDevicesAttached(log, vmmDevices)
             if (rc != 0) {
                 rcAll = 1
             }
         } catch (ex: Throwable) {
+            log.error("error cleaning up vmm devices", ex)
             rcAll = 1
         }
     }
@@ -144,29 +120,27 @@ suspend fun cleanup(jail: JailParameters): Int {
     return rcAll
 }
 
-private suspend fun cleanupJails(jail: JailParameters): Int {
+private suspend fun cleanupJails(log: OciLogger, jail: JailParameters): Int {
     val children = readJailParameters().filter { p ->
         p.parameters.getValue("parent").jsonPrimitive.int == jail.jid
     }
     var rcAll = 0
     for (child in children) {
-        trace(1, "removing nested jail \"${child.name}\"")
+        log.info("removing nested jail \"${child.name}\"")
         try {
             jailRemove(child)
         } catch (ex: Exception) {
-            trace(
-                0,
-                "warn:",
-                "failed to remove nested jail \"${child.name}\"",
-                ex.message
-            )
+            log.error("failed to remove nested jail \"${child.name}\"", ex)
             rcAll = 1
         }
     }
     return rcAll
 }
 
-private suspend fun cleanupInterfaces(jail: JailParameters): Int {
+private suspend fun cleanupInterfaces(
+    log: OciLogger,
+    jail: JailParameters
+): Int {
     var rcAll = 0
     var chk = -1
     while (true) {
@@ -182,15 +156,10 @@ private suspend fun cleanupInterfaces(jail: JailParameters): Int {
         chk = netIfs.size
         val ifName = netIfs.first().name
         try {
-            trace(1, "destroying network interface \"$ifName\"")
+            log.info("destroying network interface \"$ifName\"")
             destroyNetif(jail, ifName)
         } catch (ex: Throwable) {
-            trace(
-                0,
-                "warn:",
-                "failed to destroy network interface \"$ifName\"",
-                ex.message
-            )
+            log.error("failed to destroy network interface \"$ifName\"", ex)
             rcAll = 1
         }
     }
@@ -198,6 +167,7 @@ private suspend fun cleanupInterfaces(jail: JailParameters): Int {
 }
 
 private fun cleanupMounts(
+    log: OciLogger,
     jail: JailParameters,
     mounted: List<MountInfo>,
 ): Set<MountInfo> {
@@ -206,28 +176,25 @@ private fun cleanupMounts(
     val unmounted = mutableSetOf<MountInfo>()
     for (mount in unmount.reversed()) {
         try {
-            trace(1, "unmounting ${mount.node.removePrefix(jail.path)}")
+            log.info("unmounting ${mount.node.removePrefix(jail.path)}")
             mount.parseFsId()
-                ?.let {
-                    unmount(it, force = true)
-                }
-                ?: run {
-                    unmount(mount.node, force = true)
-                }
+                ?.let { unmount(it, force = true) }
+                ?: unmount(mount.node, force = true)
             unmounted += mount
         } catch (ex: Exception) {
-            trace(
-                0,
-                "warn:",
-                "failed to unmount ${mount.node.removePrefix(jail.path)}",
-                ex.message
+            log.error(
+                "failed to unmount ${mount.node.removePrefix(jail.path)}: ",
+                ex
             )
         }
     }
     return unmounted.toSet()
 }
 
-private fun probeUnmountAttached(mounted: List<MountInfo>): Int {
+private fun probeUnmountAttached(
+    log: OciLogger,
+    mounted: List<MountInfo>
+): Int {
     var rcAll = 0
     for (mount in mounted) {
         try {
@@ -246,46 +213,39 @@ private fun probeUnmountAttached(mounted: List<MountInfo>): Int {
                 permissionDenied = true
             }
             if (!permissionDenied) {
-                trace(0, "unmounted ${mount.node}")
+                log.info("unmounted ${mount.node}")
             }
         } catch (ex: Exception) {
-            trace(
-                0,
-                "error unmounting ${mount.node}:",
-                ex.message
-            )
+            log.error("error unmounting ${mount.node}", ex)
             rcAll = 1
         }
     }
     return rcAll
 }
 
-private fun cleanupMountsAttached(mounted: List<MountInfo>): Int {
+private fun cleanupMountsAttached(
+    log: OciLogger,
+    mounted: List<MountInfo>
+): Int {
     var rcAll = 0
     for (mount in mounted) {
         try {
-            trace(1, "unmounting ${mount.node}")
+            log.info("unmounting ${mount.node}")
             mount.parseFsId()
-                ?.let {
-                    unmount(it, force = true)
-                }
-                ?: run {
-                    unmount(mount.node, force = true)
-                }
+                ?.let { unmount(it, force = true) }
+                ?: unmount(mount.node, force = true)
         } catch (ex: Exception) {
-            trace(
-                0,
-                "warn:",
-                "failed to unmount ${mount.node}:",
-                ex.message
-            )
+            log.error("failed to unmount ${mount.node}", ex)
             rcAll = 1
         }
     }
     return rcAll
 }
 
-private fun cleanupVmmDevicesAttached(vmmDevices: Set<String>): Int {
+private fun cleanupVmmDevicesAttached(
+    log: OciLogger,
+    vmmDevices: Set<String>
+): Int {
     var rcAll = 0
     for (vm in vmmDevices) {
         try {
@@ -293,19 +253,14 @@ private fun cleanupVmmDevicesAttached(vmmDevices: Set<String>): Int {
             when (vmDestroy(vm)) {
                 is VmDestroyResult.NoPermission -> { /* ignore this vm */ }
                 is VmDestroyResult.NotFound -> {
-                    trace(0, "warn:", "vm \"$vm\" disappeared while cleaning")
+                    log.warn("vm \"$vm\" disappeared while cleaning")
                 }
                 is VmDestroyResult.Ok -> {
-                    trace(1, "destroyed vmm device \"$vm\"")
+                    log.info("destroyed vmm device \"$vm\"")
                 }
             }
         } catch (ex: Exception) {
-            trace(
-                0,
-                "warn:",
-                "failed to destroy vmm device \"$vm\":",
-                ex.message
-            )
+            log.error("failed to destroy vmm device \"$vm\":", ex)
             rcAll = 1
         }
     }

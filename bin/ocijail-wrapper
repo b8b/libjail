@@ -20,10 +20,6 @@ ROOTDIR="${BINDIR%/*}"
 
 java_cmd=/usr/local/openjdk22/bin/java
 
-if [ -x /jail/podman"$java_cmd" ]; then
-  java_cmd=/jail/podman"$java_cmd"
-fi
-
 if [ -x "$ROOTDIR"/jre/bin/java ]; then
   java_cmd="$ROOTDIR"/jre/bin/java
 fi

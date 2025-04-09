@@ -154,7 +154,7 @@ fun unmount(
     }
     val decimalFsId = fsId.encodeToDecimalFsId()
     trace(3, "unmount(", decimalFsId, flags.toString(), ")")
-    val rc = FREEBSD_LIBC.unmount(decimalFsId, flags)
+    val rc = FREEBSD_LIBC.unmount(decimalFsId, (flags and 0xFFFFFFFF).toInt())
     if (rc != 0) {
         errorHandler("unmount", Native.getLastError())
     }
@@ -170,7 +170,7 @@ fun unmount(
         flags = flags or MNT_FORCE
     }
     trace(3, "unmount(", dir, flags.toString(), ")")
-    val rc = FREEBSD_LIBC.unmount(dir, flags)
+    val rc = FREEBSD_LIBC.unmount(dir, (flags and 0xFFFFFFFF).toInt())
     if (rc != 0) {
         errorHandler("unmount", Native.getLastError())
     }

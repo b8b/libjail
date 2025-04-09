@@ -1,13 +1,15 @@
 package org.cikit.libjail
 
+import com.sun.jna.IntegerType
 import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.Structure
-import com.sun.jna.ptr.NativeLongByReference
+import com.sun.jna.ptr.ByReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+
 
 sealed class TraceEvent {
     class Msg(val level: Int, val msg: String) : TraceEvent() {
@@ -97,19 +99,58 @@ internal suspend fun pRead(
     }
 }
 
+internal class SizeT(
+    value: Long = 0
+) : IntegerType(Native.SIZE_T_SIZE, value, true) {
+    override fun toByte(): Byte {
+        return this.toByte()
+    }
+    override fun toShort(): Short {
+        return this.toShort()
+    }
+}
+
+internal class SizeTByReference(
+    value: SizeT = SizeT()
+) : ByReference(Native.SIZE_T_SIZE) {
+
+   init {
+        setValue(value)
+    }
+
+    fun getValue(): SizeT {
+        val p = pointer
+        return if (Native.SIZE_T_SIZE == 8) {
+            SizeT(p.getLong(0))
+        } else {
+            SizeT(p.getInt(0).toLong())
+        }
+    }
+
+    fun setValue(value: SizeT) {
+        val p = pointer
+        if (Native.SIZE_T_SIZE == 8) {
+            p.setLong(0, value.toLong())
+        } else {
+            p.setInt(0, value.toInt())
+        }
+    }
+
+}
+
 internal interface FreeBSDLibC : com.sun.jna.Library {
     fun nmount(iov: Array<StructIov?>?, niov: Int, flags: Int): Int
-    fun unmount(dir: String, flags: Long): Int
+    fun unmount(dir: String, flags: Int): Int
 
     fun jail_attach(jid: Int): Int
     fun jail_remove(jid: Int): Int
 
     fun sysctlbyname(
-        name: String?,  // sysctl name (e.g., "hw.model")
-        oldp: Pointer?,  // buffer to store result
-        oldlenp: NativeLongByReference?,  // buffer size (input/output)
-        newp: Pointer?,  // new value (setter) or null
-        newlen: Long? // new value length (or 0)
+        name: String?,               // sysctl name (e.g., "hw.model")
+        oldp: Pointer?,              // buffer to store result
+        oldlenp: SizeTByReference?,  // buffer size (input/output)
+        newp: Pointer?,              // new value (setter) or null
+        newlen: SizeT?               // new value length (or 0)
     ): Int
 }
 

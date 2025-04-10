@@ -1,9 +1,6 @@
-package org.cikit.libjail.oci
+package org.cikit.oci
 
-import com.github.ajalt.clikt.core.CliktCommand
-import com.github.ajalt.clikt.core.Context
-import com.github.ajalt.clikt.core.requireObject
-import com.github.ajalt.clikt.core.theme
+import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.help
 import com.github.ajalt.clikt.parameters.options.option
@@ -25,6 +22,23 @@ class ListCommand : CliktCommand("list") {
         .help("output format: either table or json (default: table)")
 
     override fun run() {
-        exitProcess(EXIT_UNHANDLED)
+        val rc = try {
+            callOciRuntime(
+                options,
+                buildList {
+                    add("list")
+                    if (quiet) {
+                        add("--quiet")
+                    }
+                    format?.let {
+                        add("--format=$it")
+                    }
+                }
+            )
+        } catch (ex: Throwable) {
+            options.ociLogger.error(ex.toString(), ex)
+            1
+        }
+        exitProcess(rc)
     }
 }

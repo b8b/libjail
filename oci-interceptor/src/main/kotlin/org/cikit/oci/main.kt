@@ -59,13 +59,13 @@ fi
 ///DEP=org.jetbrains.kotlinx:kotlinx-io-core-jvm:0.6.0
 ///DEP=org.jetbrains.kotlinx:kotlinx-io-bytestring-jvm:0.6.0
 
-///INC=../../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/jail.kt
-///INC=../../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/kill.kt
-///INC=../../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/mount.kt
-///INC=../../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/sysctl.kt
-///INC=../../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/util.kt
-///INC=../../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/vmm.kt
-///INC=../../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/vnet.kt
+///INC=../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/jail.kt
+///INC=../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/kill.kt
+///INC=../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/mount.kt
+///INC=../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/sysctl.kt
+///INC=../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/util.kt
+///INC=../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/vmm.kt
+///INC=../../../../../../../libjail/src/main/kotlin/org/cikit/libjail/vnet.kt
 
 ///INC=OciConfig.kt
 ///INC=OciLogger.kt
@@ -80,11 +80,13 @@ fi
 ///INC=StartCommand.kt
 ///INC=StateCommand.kt
 
-///MAIN=org.cikit.libjail.oci.MainKt
+///MAIN=org.cikit.oci.MainKt
 
-package org.cikit.libjail.oci
+package org.cikit.oci
 
 import com.github.ajalt.clikt.core.*
+import com.github.ajalt.clikt.parameters.arguments.argument
+import com.github.ajalt.clikt.parameters.arguments.multiple
 import com.github.ajalt.clikt.parameters.groups.OptionGroup
 import com.github.ajalt.clikt.parameters.groups.provideDelegate
 import com.github.ajalt.clikt.parameters.options.default
@@ -93,7 +95,9 @@ import com.github.ajalt.clikt.parameters.options.help
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
-import kotlinx.serialization.json.*
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import org.cikit.libjail.TraceEvent
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Path
@@ -107,7 +111,8 @@ val json = Json {
     ignoreUnknownKeys = true
 }
 
-private const val ociJailBinDefault = "/usr/local/bin/ocijail"
+private const val ociRuntimeBinDefault = "/usr/local/bin/ocijail"
+
 private const val ociJailStateBaseDefault = "/var/run/ocijail"
 private const val ociJailStateFile = "state.json"
 private const val ociJailStateLock = "state.lock"
@@ -116,10 +121,9 @@ const val OCI_ANNOTATION_VNET = "org.freebsd.jail.vnet"
 const val OCI_ANNOTATION_ALLOW = "org.freebsd.jail.allow"
 const val OCI_ANNOTATION_SECURE_LEVEL = "org.freebsd.jail.securelevel"
 
-const val EXIT_UNHANDLED = 9
-
 data class GlobalOptions(
-    val ociJailBin: Path,
+    val ociRuntimeBin: Path,
+    val ociRuntimeFlags: List<String>,
     val root: Path,
     val logFormat: String?,
     val logLevel: String?,
@@ -157,7 +161,7 @@ data class GlobalOptions(
         }
     }
 
-    fun readWrapperState(containerId: String): JsonObject? {
+    fun readInterceptorState(containerId: String): JsonObject? {
         val stateFile = localStateDir / "$containerId.json"
         if (stateFile.parent?.exists() != true) {
             return null
@@ -184,7 +188,7 @@ data class GlobalOptions(
         }
     }
 
-    fun writeWrapperState(containerId: String, state: JsonObject) {
+    fun writeInterceptorState(containerId: String, state: JsonObject) {
         val stateJson = json.encodeToString(state)
         val stateFile = localStateDir / "$containerId.json"
         stateFile.parent?.let {
@@ -206,7 +210,7 @@ data class GlobalOptions(
         }
     }
 
-    fun deleteWrapperState(containerId: String) {
+    fun deleteInterceptorState(containerId: String) {
         val stateFile = localStateDir / "$containerId.json"
         if (stateFile.exists()) {
             stateFile.deleteIfExists()
@@ -216,13 +220,16 @@ data class GlobalOptions(
 
 class GlobalCommandOptions : OptionGroup(name = "Global Options") {
 
-    private val ociJailBin by option()
-        .help("Path to ocijail")
+    private val ociRuntimeBin by option()
+        .help("Path to oci runtime")
         .path(mustExist = true, canBeDir = false)
 
     private val root by option()
         .help("Override default location for state database")
         .path()
+
+    private val log by option()
+        .help("Log file")
 
     private val logFormat by option()
         .help("Log format")
@@ -230,13 +237,10 @@ class GlobalCommandOptions : OptionGroup(name = "Global Options") {
     private val logLevel by option()
         .help("Log level")
 
-    private val log by option()
-        .help("Log file")
-
     private val localStateDir by option()
-        .help("Override default location for wrapper state database")
+        .help("Override default location for interceptor state database")
         .path(canBeFile = false)
-        .default(Path("/var/run/ocijail-wrapper"))
+        .default(Path("/var/run/oci-interceptor"))
 
     private val devFsRulesetVnet by option()
         .help("Use the specified devfs ruleset for vnet jails")
@@ -246,8 +250,11 @@ class GlobalCommandOptions : OptionGroup(name = "Global Options") {
         .help("Use the specified devfs ruleset for vmm jails")
         .long()
 
-    fun getGlobalOptions(): GlobalOptions = GlobalOptions(
-        ociJailBin = ociJailBin ?: Path(ociJailBinDefault),
+    fun getGlobalOptions(
+        ociRuntimeFlags: List<String>
+    ): GlobalOptions = GlobalOptions(
+        ociRuntimeBin = ociRuntimeBin ?: Path(ociRuntimeBinDefault),
+        ociRuntimeFlags = ociRuntimeFlags,
         root = root ?: Path(ociJailStateBaseDefault),
         logFormat = logFormat,
         logLevel = logLevel,
@@ -263,12 +270,13 @@ class GlobalCommandOptions : OptionGroup(name = "Global Options") {
     )
 }
 
-private class OciRuntimeCommand : CliktCommand("ocijail-wrapper") {
+private open class OciRuntimeCommand : CliktCommand("oci-interceptor") {
 
     override val invokeWithoutSubcommand = true
+    override val treatUnknownOptionsAsArgs = true
 
     override fun help(context: Context): String {
-        return context.theme.info("wrapper around ocijail oci runtime")
+        return context.theme.info("intercept oci runtime invocation")
     }
 
     private val globalOptions by GlobalCommandOptions()
@@ -276,6 +284,8 @@ private class OciRuntimeCommand : CliktCommand("ocijail-wrapper") {
     private val version by option()
         .help("Print runtime version")
         .flag()
+
+    private val ociRuntimeFlags by argument("OCI_RUNTIME_FLAGS").multiple()
 
     init {
         subcommands(
@@ -291,14 +301,42 @@ private class OciRuntimeCommand : CliktCommand("ocijail-wrapper") {
     }
 
     override fun run() {
+        val globalOptions = globalOptions.getGlobalOptions(ociRuntimeFlags)
         if (version) {
-            exitProcess(EXIT_UNHANDLED)
+            val rc = callOciRuntime(globalOptions, "--version")
+            exitProcess(rc)
         }
-        val globalOptions = globalOptions.getGlobalOptions()
         currentContext.findOrSetObject {
             globalOptions
         }
     }
 }
+
+fun callOciRuntime(
+    options: GlobalOptions,
+    args: List<String>
+): Int {
+    val allArgs: List<String> = buildList {
+        add(options.ociRuntimeBin.pathString)
+        addAll(options.ociRuntimeFlags)
+        add("--root=${options.root}")
+        options.logFile?.let { add ("--log=$it") }
+        options.logLevel?.let { add ("--log-level=$it") }
+        options.logFormat?.let { add("--log-format=$it") }
+        args.forEach { add(it) }
+    }
+    options.ociLogger.trace(TraceEvent.Exec(allArgs))
+    options.ociLogger.close()
+    try {
+        return ProcessBuilder(allArgs).inheritIO().start().waitFor()
+    } finally {
+        options.ociLogger.open()
+    }
+}
+
+fun callOciRuntime(
+    options: GlobalOptions,
+    vararg arg: String
+): Int = callOciRuntime(options, arg.toList())
 
 fun main(args: Array<String>) = OciRuntimeCommand().main(args)

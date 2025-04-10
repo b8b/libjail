@@ -1,9 +1,6 @@
-package org.cikit.libjail.oci
+package org.cikit.oci
 
-import com.github.ajalt.clikt.core.CliktCommand
-import com.github.ajalt.clikt.core.Context
-import com.github.ajalt.clikt.core.requireObject
-import com.github.ajalt.clikt.core.theme
+import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.help
@@ -51,6 +48,34 @@ class ExecCommand : CliktCommand("exec") {
         .long()
 
     override fun run() {
-        exitProcess(EXIT_UNHANDLED)
+        val rc = try {
+            callOciRuntime(
+                options,
+                buildList {
+                    add("exec")
+                    add("--process=$process")
+                    consoleSocket?.let {
+                        add("--console-socket=$it")
+                    }
+                    pidFile?.let {
+                        add("--pid-file=$it")
+                    }
+                    if (tty) {
+                        add("--tty")
+                    }
+                    if (detach) {
+                        add("--detach")
+                    }
+                    add(containerId)
+                    preserveFds?.let {
+                        add("--preserve-fds=$it")
+                    }
+                }
+            )
+        } catch (ex: Throwable) {
+            options.ociLogger.error(ex.toString(), ex)
+            1
+        }
+        exitProcess(rc)
     }
 }

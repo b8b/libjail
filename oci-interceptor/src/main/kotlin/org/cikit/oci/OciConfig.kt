@@ -1,4 +1,4 @@
-package org.cikit.libjail.oci
+package org.cikit.oci
 
 import kotlinx.serialization.Serializable
 

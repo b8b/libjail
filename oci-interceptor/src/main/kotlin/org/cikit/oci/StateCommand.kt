@@ -1,9 +1,6 @@
-package org.cikit.libjail.oci
+package org.cikit.oci
 
-import com.github.ajalt.clikt.core.CliktCommand
-import com.github.ajalt.clikt.core.Context
-import com.github.ajalt.clikt.core.requireObject
-import com.github.ajalt.clikt.core.theme
+import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.arguments.argument
 import kotlin.system.exitProcess
 
@@ -20,6 +17,12 @@ class StateCommand : CliktCommand("state") {
     )
 
     override fun run() {
-        exitProcess(EXIT_UNHANDLED)
+        val rc = try {
+            callOciRuntime(options, "state", containerId)
+        } catch (ex: Throwable) {
+            options.ociLogger.error(ex.toString(), ex)
+            1
+        }
+        currentContext.exitProcess(rc)
     }
 }

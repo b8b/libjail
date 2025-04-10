@@ -1,4 +1,4 @@
-package org.cikit.libjail.oci
+package org.cikit.oci
 
 import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.options.option

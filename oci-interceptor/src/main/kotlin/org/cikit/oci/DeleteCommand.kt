@@ -1,4 +1,4 @@
-package org.cikit.libjail.oci
+package org.cikit.oci
 
 import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.arguments.argument
@@ -26,10 +26,9 @@ class DeleteCommand : CliktCommand("delete") {
     )
 
     override fun run() {
-        val wrapperState = options.readWrapperState(containerId)
-        wrapperState?.let { options.ociLogger.restoreState(it) }
-        val state = options.readOciJailState(containerId)
-            ?: exitProcess(EXIT_UNHANDLED)
+        val interceptorState = options.readInterceptorState(containerId)
+        interceptorState?.let { options.ociLogger.restoreState(it) }
+        val state = options.readOciJailState(containerId) ?: execOciRuntime()
         val status = state["status"]?.jsonPrimitive?.content ?: "unknown"
         val canDelete = when (status) {
             "stopped", "created" -> true
@@ -49,21 +48,41 @@ class DeleteCommand : CliktCommand("delete") {
             val jail = jails.singleOrNull { p ->
                 p.name == containerId || p.jid == containerId.toIntOrNull()
             }
-            if (jail == null) {
-                options.deleteWrapperState(containerId)
-                exitProcess(EXIT_UNHANDLED)
+            if (jail != null) {
+                val rc = try {
+                    cleanup(options.ociLogger, jail)
+                } catch (ex: Throwable) {
+                    options.ociLogger.error(ex.toString(), ex)
+                    1
+                }
+                if (rc != 0) {
+                    throw PrintMessage(
+                        "delete failed",
+                        1,
+                        printError = true
+                    )
+                }
             }
-            try {
-                cleanup(options.ociLogger, jail)
-            } catch (ex: Throwable) {
-                throw PrintMessage(
-                    "delete failed: ${ex.message}",
-                    1,
-                    printError = true
-                )
-            }
-            options.deleteWrapperState(containerId)
-            exitProcess(EXIT_UNHANDLED)
+            options.deleteInterceptorState(containerId)
         }
+        execOciRuntime()
+    }
+
+    private fun callOciRuntime() = runBlocking {
+        callOciRuntime(
+            options,
+            buildList {
+                add("delete")
+                if (force) {
+                    add("--force")
+                }
+                add(containerId)
+            }
+        )
+    }
+
+    private fun execOciRuntime(): Nothing {
+        val rc = callOciRuntime()
+        exitProcess(rc)
     }
 }

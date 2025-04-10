@@ -30,21 +30,4 @@ fi
 
 export M2_LOCAL_REPO="$ROOTDIR"/lib
 
-"$ROOTDIR"/ocijail-wrapper/src/main/kotlin/org/cikit/libjail/oci/main.kt "$@"
-rc="$?"
-
-if [ "$rc" -eq 0 ]; then
-  exit
-fi
-
-if [ "$rc" -eq 9 ]; then
-  if /usr/local/bin/ocijail "$@"; then
-    exit 0
-  else
-    echo "ocijail terminated with exit code $?" >&2
-    exit "$?"
-  fi
-fi
-
-echo "rejected oci runtime execution with exit code $rc" >&2
-exit 1
+exec "$ROOTDIR"/oci-interceptor/src/main/kotlin/org/cikit/oci/main.kt "$@"

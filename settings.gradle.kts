@@ -7,4 +7,4 @@ pluginManagement {
 }
 
 include("libjail")
-include("ocijail-wrapper")
+include("oci-interceptor")

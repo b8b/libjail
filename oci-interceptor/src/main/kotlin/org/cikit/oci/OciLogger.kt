@@ -1,4 +1,4 @@
-package org.cikit.libjail.oci
+package org.cikit.oci
 
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -129,14 +129,18 @@ class OciLogger(
         }
         val now = OffsetDateTime.now().toString()
         synchronized(Lock) {
+            val finalLogLevel = when (logLevel) {
+                "0", "info" -> 1
+                "1", "warn" -> 0
+                "2", "debug" -> 3
+                else -> 1
+            }
             if (logToConsole) {
-                val finalLogLevel = when (logLevel) {
-                    "0", "info" -> 1
-                    "1", "warn" -> 0
-                    "2", "debug" -> 3
-                    else -> 1
-                }
-                if (finalLogLevel >= evLevel) {
+                if (ev is TraceEvent.Err && finalLogLevel >= 3) {
+                    ev.ex
+                        ?.printStackTrace()
+                        ?: System.err.println(evMsgString)
+                } else if (finalLogLevel >= evLevel) {
                     System.err.println(evMsgString)
                 }
             } else {
@@ -154,6 +158,12 @@ class OciLogger(
                 }
                 writer.appendLine(line)
                 writer.flush()
+                if (ev is TraceEvent.Err) {
+                    ev.ex
+                        ?.takeIf { finalLogLevel >= 3 }
+                        ?.printStackTrace()
+                        ?: System.err.println(evMsgString)
+                }
             }
         }
     }

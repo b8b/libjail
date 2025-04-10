@@ -1,4 +1,4 @@
-package org.cikit.libjail.oci
+package org.cikit.oci
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
@@ -39,6 +39,25 @@ class KillCommand : CliktCommand("kill") {
         .long()
 
     override fun run() {
-        exitProcess(EXIT_UNHANDLED)
+        val rc = try {
+            callOciRuntime(
+                options,
+                buildList {
+                    add("kill")
+                    if (all) {
+                        add("--all")
+                    }
+                    pid?.let {
+                        add("--pid=$it")
+                    }
+                    add(containerId)
+                    signal?.let { add(it.toString()) }
+                }
+            )
+        } catch (ex: Throwable) {
+            options.ociLogger.error(ex.toString(), ex)
+            1
+        }
+        exitProcess(rc)
     }
 }

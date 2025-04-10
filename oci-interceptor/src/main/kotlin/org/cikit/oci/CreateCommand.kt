@@ -1,4 +1,4 @@
-package org.cikit.libjail.oci
+package org.cikit.oci
 
 import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.arguments.argument
@@ -43,10 +43,10 @@ class CreateCommand : CliktCommand("create") {
 
     override fun run() {
         try {
-            val wrapperStateIn = options.readWrapperState(containerId)
-            val wrapperStateOut = buildJsonObject {
-                if (wrapperStateIn != null) {
-                    for ((k, v) in wrapperStateIn.entries) {
+            val interceptorStateIn = options.readInterceptorState(containerId)
+            val interceptorStateOut = buildJsonObject {
+                if (interceptorStateIn != null) {
+                    for ((k, v) in interceptorStateIn.entries) {
                         put(k, v)
                     }
                 }
@@ -54,8 +54,8 @@ class CreateCommand : CliktCommand("create") {
                 put("logLevel", options.logLevel)
                 put("logFormat", options.logFormat)
             }
-            if (wrapperStateIn != wrapperStateOut) {
-                options.writeWrapperState(containerId, wrapperStateOut)
+            if (interceptorStateIn != interceptorStateOut) {
+                options.writeInterceptorState(containerId, interceptorStateOut)
             }
             val hostUuid = buildString {
                 append(containerId.substring(0, 8))
@@ -104,7 +104,7 @@ class CreateCommand : CliktCommand("create") {
             val secureLevel = patchedConfig
                 .annotations[OCI_ANNOTATION_SECURE_LEVEL]
 
-            val jail = callOciJail()
+            val jail = callOciRuntime()
 
             runBlocking {
                 options.ociLogger.info("modifying jail parameters")
@@ -121,11 +121,8 @@ class CreateCommand : CliktCommand("create") {
                 )
             }
         } catch (ex: Throwable) {
-            throw PrintMessage(
-                "create failed: ${ex.message}",
-                1,
-                printError = true
-            )
+            options.ociLogger.error(ex.toString(), ex)
+            currentContext.exitProcess(1)
         }
     }
 
@@ -270,36 +267,28 @@ class CreateCommand : CliktCommand("create") {
         return sysctlByNameInt32("security.jail.vmm_allowed") == 1
     }
 
-    private fun callOciJail(): JailParameters = runBlocking {
-        val args = buildList {
-            add(options.ociJailBin.pathString)
-            add("create")
-            add("--bundle")
-            add(bundle.pathString)
-            consoleSocket?.let {
-                add("--console-socket")
-                add(it.pathString)
+    private fun callOciRuntime(): JailParameters = runBlocking {
+        val rc = callOciRuntime(
+            options,
+            buildList {
+                add("create")
+                add("--bundle=$bundle")
+                consoleSocket?.let {
+                    add("--console-socket=$it")
+                }
+                pidFile?.let {
+                    add("--pid-file=$it")
+                }
+                preserveFds?.let {
+                    add("--preserve-fds=$it")
+                }
+                add(containerId)
             }
-            pidFile?.let {
-                add("--pid-file")
-                add(it.pathString)
-            }
-            preserveFds?.let {
-                add("--preserve-fds")
-                add(it.toString())
-            }
-            add(containerId)
-        }
-        options.ociLogger.trace(TraceEvent.Exec(args))
-        options.ociLogger.close()
-        val rc = try {
-            ProcessBuilder(args).inheritIO().start().waitFor()
-        } finally {
-            options.ociLogger.open()
-        }
-        require(rc == 0) { "ocijail terminated with exit code $rc" }
+        )
+        require(rc == 0) { "oci runtime terminated with exit code $rc" }
         readJailParameters().singleOrNull { jail ->
             jail.name == containerId
         } ?: error("jail \"$containerId\" not found")
     }
+
 }

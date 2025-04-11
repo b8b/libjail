@@ -84,7 +84,7 @@ suspend fun cleanup(log: OciLogger, jail: JailParameters): Int {
     }
 
     try {
-        log.info("attaching to jail")
+        log.info("attaching to jail to cleanup private resources")
         jailAttach(jail)
     } catch (ex: Exception) {
         throw RuntimeException("failed to attach to jail", ex)

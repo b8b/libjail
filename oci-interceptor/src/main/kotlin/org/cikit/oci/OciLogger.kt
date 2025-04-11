@@ -71,6 +71,14 @@ class OciLogger(
         }
     }
 
+    fun overrideLogFile(logFile: String) {
+        synchronized(Lock) {
+            close()
+            this.logFile = logFile.takeIf { it.isNotBlank() }
+            open()
+        }
+    }
+
     fun open() {
         synchronized(Lock) {
             w?.close()

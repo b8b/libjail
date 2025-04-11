@@ -49,6 +49,10 @@ open class GenericInterceptor(
 
     protected val ociRuntimeFlags by argument("OCI_RUNTIME_FLAGS").multiple()
 
+    protected val overrideLogFile by option()
+        .help("override log file location")
+        .path(canBeDir = false)
+
     protected val localStateDir by option()
         .help("Override default location for interceptor state database")
         .path(canBeFile = false)
@@ -61,6 +65,9 @@ open class GenericInterceptor(
     }
 
     override fun run() {
+        overrideLogFile?.let { p ->
+            logger.overrideLogFile(p.pathString)
+        }
         super.run()
         if (currentContext.invokedSubcommand == null) {
             throw PrintHelpMessage(

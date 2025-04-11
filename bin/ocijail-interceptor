@@ -86,6 +86,9 @@ set -- --oci-runtime-bin=/usr/local/bin/ocijail "$@"
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-ffm-jvm:3.0.2
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-graal-ffi-jvm:3.0.2
 
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/ocijail.kt
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/cleanup.kt
+
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/GenericInterceptor.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/OciCommand.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/OciConfig.kt

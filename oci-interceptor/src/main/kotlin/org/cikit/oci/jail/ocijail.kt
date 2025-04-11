@@ -91,9 +91,7 @@ class OciJailInterceptor : GenericInterceptor(
 
     companion object {
         @JvmStatic
-        fun main(args: Array<String>) = OciJailInterceptor().main(
-            listOf("--oci-runtime-bin=/usr/local/bin/ocijail") + args
-        )
+        fun main(args: Array<String>) = OciJailInterceptor().main(args)
     }
 }
 

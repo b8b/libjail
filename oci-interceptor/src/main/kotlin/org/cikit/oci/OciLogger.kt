@@ -20,10 +20,8 @@ class OciLogger(
         private set
 
     var logFormat: String? = logFormat
-        private set
 
     var logLevel: String? = logLevel
-        private set
 
     private object Lock
 
@@ -54,13 +52,16 @@ class OciLogger(
     fun restoreState(state: JsonObject) {
         synchronized(Lock) {
             if (logLevel == null) {
-                logLevel = (state["logLevel"] as? JsonPrimitive)?.content
+                logLevel = (state["logLevel"] as? JsonPrimitive)
+                    ?.contentOrNull
             }
             if (logFormat == null) {
-                logFormat = (state["logFormat"] as? JsonPrimitive)?.content
+                logFormat = (state["logFormat"] as? JsonPrimitive)
+                    ?.contentOrNull
             }
             if (logFile == null) {
-                logFile = (state["logFile"] as? JsonPrimitive)?.content
+                logFile = (state["logFile"] as? JsonPrimitive)
+                    ?.contentOrNull
                 if (logFile != null) {
                     logToConsole = false
                     open()
@@ -71,10 +72,10 @@ class OciLogger(
         }
     }
 
-    fun overrideLogFile(logFile: String) {
+    fun overrideLogFile(logFile: String?) {
         synchronized(Lock) {
-            close()
-            this.logFile = logFile.takeIf { it.isNotBlank() }
+            this.logFile = logFile
+            this.logToConsole = this.logFile == null
             open()
         }
     }

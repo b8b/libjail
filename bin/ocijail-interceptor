@@ -37,8 +37,8 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
 PRG="$0"
 
 while [ -h "$PRG" ]; do
-  ls=`ls -ld "$PRG"`
-  link=`expr "$ls" : '.*-> \(.*\)$'`
+  ls="$(ls -ld "$PRG")"
+  link="$(expr "$ls" : '.*-> \(.*\)$')"
   if expr "$link" : '/.*' > /dev/null; then
     PRG="$link"
   else
@@ -48,6 +48,10 @@ done
 
 BINDIR="${PRG%/*}"
 ROOTDIR="${BINDIR%/*}"
+
+if [ "$ROOTDIR" = "$BINDIR" ]; then
+  ROOTDIR="$BINDIR"/..
+fi
 
 if [ -x "$ROOTDIR"/jre/bin/java ]; then
   java_cmd="$ROOTDIR"/jre/bin/java
@@ -60,6 +64,8 @@ if [ -x "$java_cmd" ]; then
 fi
 
 export M2_LOCAL_REPO="$ROOTDIR"/lib
+
+set -- --oci-runtime-bin=/usr/local/bin/ocijail "$@"
 
 . "$kotlin_script_sh"; exit 2
 

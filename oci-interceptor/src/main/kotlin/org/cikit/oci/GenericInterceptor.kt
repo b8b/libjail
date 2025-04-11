@@ -49,9 +49,12 @@ open class GenericInterceptor(
 
     protected val ociRuntimeFlags by argument("OCI_RUNTIME_FLAGS").multiple()
 
-    protected val overrideLogFile by option()
+    protected val overrideLog by option()
         .help("override log file location")
         .path(canBeDir = false)
+
+    protected val overrideLogFormat by option()
+        .help("override log format")
 
     protected val localStateDir by option()
         .help("Override default location for interceptor state database")
@@ -65,8 +68,16 @@ open class GenericInterceptor(
     }
 
     override fun run() {
-        overrideLogFile?.let { p ->
-            logger.overrideLogFile(p.pathString)
+        overrideLog?.let { s ->
+            logger.overrideLogFile(s.pathString)
+            logger.logFormat = if (s.endsWith(".json")) {
+                "json"
+            } else {
+                "text"
+            }
+        }
+        overrideLogFormat?.let { f ->
+            logger.logFormat = f
         }
         super.run()
         if (currentContext.invokedSubcommand == null) {
@@ -180,9 +191,14 @@ open class GenericInterceptor(
     fun callOciRuntime(args: Iterable<String>) {
         val allArgs = rebuildGlobalOptions() + args
         logger.trace(TraceEvent.Exec(allArgs))
-        val rc = ProcessBuilder(allArgs).inheritIO().start().waitFor()
-        if (rc != 0) {
-            throw ProgramResult(rc)
+        logger.close()
+        try {
+            val rc = ProcessBuilder(allArgs).inheritIO().start().waitFor()
+            if (rc != 0) {
+                throw ProgramResult(rc)
+            }
+        } finally {
+            logger.open()
         }
     }
 

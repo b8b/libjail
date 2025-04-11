@@ -1,9 +1,6 @@
 package org.cikit.oci
 
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import kotlinx.serialization.json.*
 import org.cikit.libjail.TraceControl
 import org.cikit.libjail.TraceEvent
 import org.cikit.libjail.registerTraceFunction
@@ -15,11 +12,19 @@ import kotlin.io.path.Path
 import kotlin.io.path.bufferedWriter
 
 class OciLogger(
-    private var logFile: String?,
-    private var logFormat: String?,
-    private var logLevel: String?
-
+    logFile: String?,
+    logFormat: String?,
+    logLevel: String?
 ) {
+    var logFile: String? = logFile
+        private set
+
+    var logFormat: String? = logFormat
+        private set
+
+    var logLevel: String? = logLevel
+        private set
+
     private object Lock
 
     private var w: BufferedWriter? = null
@@ -38,6 +43,12 @@ class OciLogger(
             trace(ev)
             TraceControl.CONTINUE
         }
+    }
+
+    fun saveState() = buildJsonObject {
+        put("logFile", logFile)
+        put("logLevel", logLevel)
+        put("logFormat", logFormat)
     }
 
     fun restoreState(state: JsonObject) {
@@ -146,7 +157,7 @@ class OciLogger(
             } else {
                 val writer = w ?: return@synchronized
                 val line = if (logFormat == "json") {
-                    json.encodeToString(
+                    Json.encodeToString(
                         buildJsonObject {
                             put("msg", evMsgString)
                             put("level", evLevelString)

@@ -1,10 +1,11 @@
-package org.cikit.oci
+package org.cikit.oci.jail
 
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import org.cikit.libjail.*
+import org.cikit.oci.OciLogger
 
 suspend fun cleanup(log: OciLogger, jail: JailParameters): Int {
     var rcAll = 0

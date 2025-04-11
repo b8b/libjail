@@ -41,10 +41,9 @@ class OciJailInterceptor : GenericInterceptor(
     create = Create(),
     delete = Delete()
 ) {
-    override val ociRuntimeBin by option()
-        .help("Path to oci runtime")
-        .path(mustExist = true, canBeDir = false)
-        .default(Path("/usr/local/bin/ocijail"))
+    init {
+        subcommands(CleanupCommand())
+    }
 
     val root by option()
         .help("Override default location for state database").path()
@@ -88,6 +87,13 @@ class OciJailInterceptor : GenericInterceptor(
         } else {
             json.decodeFromString(stateJson)
         }
+    }
+
+    companion object {
+        @JvmStatic
+        fun main(args: Array<String>) = OciJailInterceptor().main(
+            listOf("--oci-runtime-bin=/usr/local/bin/ocijail") + args
+        )
     }
 }
 

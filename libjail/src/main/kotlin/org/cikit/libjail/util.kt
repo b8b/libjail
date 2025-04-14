@@ -29,7 +29,7 @@ sealed class TraceEvent {
     }
 
     class Info(val msg: String) : TraceEvent()
-    class Warn(val msg: String) : TraceEvent()
+    class Warn(val msg: String, val ex: Throwable? = null) : TraceEvent()
     class Err(val msg: String, val ex: Throwable? = null) : TraceEvent()
 }
 

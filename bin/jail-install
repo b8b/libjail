@@ -83,6 +83,9 @@ pkg_packages="FreeBSD-blocklist \
     FreeBSD-zfs \
     pkg"
 
+#################################################################
+# prepare cache
+#################################################################
 cache_root="$cache_base"/FreeBSD-"$maj"."$base_release"-RELEASE-"$arch"
 
 mkdir -p "$cache_root"/var/db/pkg \
@@ -202,6 +205,10 @@ if ! [ -e "$cache_root"/etc/pwd.db ]; then
   pwd_mkdb -i -p -d "$cache_root"/etc "$cache_root"/etc/master.passwd
 fi
 
+#################################################################
+# prepare jail
+#################################################################
+
 # ensure required files are in place
 for dir in dev var/db/pkg var/cache/pkg; do
   mkdir -p "$jail_root"/"$dir"
@@ -215,13 +222,15 @@ tar -C "$cache_root" -cf - \
 tar -C / -cf - --uname root --gname wheel usr/share/keys/pkg |\
   tar -C "$jail_root" -xkf -
 
-# prepare jail
+# create temporary directory for the jail path
 real_jail_root="$(mktemp -d /tmp/jail-XXXXXXXXXXXX)"
 real_jail_root="$(realpath "$real_jail_root")"
 jail_name="${real_jail_root##*/}"
 
+# mount jail root on temporary directory
 mount -t nullfs "$jail_root" "$real_jail_root"
 
+# schedule cleanup
 trap '"$BINDIR"/jail-cleanup -j "$jail_name" &&\
   jail -r "$jail_name" &&\
   umount -f "$real_jail_root" &&\
@@ -301,4 +310,3 @@ if [ -n "$post_install_script" ]; then
   jexec "$jail_name" /bin/sh -c "$post_install_script"
   cp "$real_jail_root"/var/db/pkg/local.sqlite* "$jail_root"/var/db/pkg/
 fi
-

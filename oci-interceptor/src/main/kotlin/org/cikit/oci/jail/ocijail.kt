@@ -1,6 +1,8 @@
 package org.cikit.oci.jail
 
-import com.github.ajalt.clikt.core.*
+import com.github.ajalt.clikt.core.PrintMessage
+import com.github.ajalt.clikt.core.main
+import com.github.ajalt.clikt.core.requireObject
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.help
 import com.github.ajalt.clikt.parameters.options.option
@@ -366,7 +368,7 @@ private class Delete : DeleteCommand() {
             }
             if (jail != null) {
                 val rc = try {
-                    cleanup(runtime.logger, jail)
+                    cleanup(jail)
                 } catch (ex: Throwable) {
                     runtime.logger.error(ex.toString(), ex)
                     1

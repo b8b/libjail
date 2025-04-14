@@ -1,0 +1,304 @@
+#!/bin/sh
+
+# resolve links - $0 may be a softlink
+PRG="$0"
+
+while [ -h "$PRG" ]; do
+  ls="$(ls -ld "$PRG")"
+  link="$(expr "$ls" : '.*-> \(.*\)$')"
+  if expr "$link" : '/.*' > /dev/null; then
+    PRG="$link"
+  else
+    PRG="${PRG%/*}"/"$link"
+  fi
+done
+
+BINDIR="${PRG%/*}"
+
+set -e
+
+target_release=
+post_install_script=
+
+args=`getopt c:r: "$@"`
+set -- $args
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  -c)
+    post_install_script="$2"
+    shift; shift
+    ;;
+  -r)
+    target_release="$2"
+    echo "error: -r is not implemented" >&2
+    exit 2
+    shift; shift
+    ;;
+  --)
+    shift; break
+    ;;
+  esac
+done
+
+jail_root="$1"
+
+if ! [ -d "$jail_root" ]; then
+  echo "usage: $0 [ -c string ] [ -r string ] /path/to/jail PKGARG..." >&2
+  exit 2
+fi
+
+shift
+
+os_reldate="$(sysctl -n kern.osreldate)"
+maj="${os_reldate%[0-9][0-9][0-9][0-9][0-9]}"
+base_release="${os_reldate%[0-9][0-9][0-9]}"
+base_release="${base_release#$maj}"
+base_release="${base_release#0}"
+arch="$(sysctl -n hw.machine_arch)"
+
+cache_base=/var/cache/jail-install
+
+pkg_packages="FreeBSD-blocklist \
+    FreeBSD-caroot \
+    FreeBSD-certctl \
+    FreeBSD-clibs \
+    FreeBSD-fetch \
+    FreeBSD-libarchive \
+    FreeBSD-libbsm \
+    FreeBSD-libbz2 \
+    FreeBSD-libcasper \
+    FreeBSD-libldns \
+    FreeBSD-liblzma \
+    FreeBSD-libmagic \
+    FreeBSD-libucl \
+    FreeBSD-mtree \
+    FreeBSD-openssl \
+    FreeBSD-openssl-lib \
+    FreeBSD-rc \
+    FreeBSD-runtime \
+    FreeBSD-tcpd \
+    FreeBSD-ufs \
+    FreeBSD-utilities \
+    FreeBSD-zfs \
+    pkg"
+
+cache_root="$cache_base"/FreeBSD-"$maj"."$base_release"-RELEASE-"$arch"
+
+mkdir -p "$cache_root"/var/db/pkg \
+         "$cache_root"/var/cache/pkg \
+         "$cache_root"/usr/local/etc/pkg/repos
+
+cat > "$cache_root"/usr/local/etc/pkg/repos/base.conf << __EOF__
+base: {
+  url: "pkg+http://pkg.FreeBSD.org/\${ABI}/base_release_$base_release",
+  mirror_type: "srv",
+  signature_type: "fingerprints",
+  fingerprints: "/usr/share/keys/pkg",
+  enabled: yes
+}
+__EOF__
+
+cat > "$cache_root"/usr/local/etc/pkg/repos/FreeBSD-release.conf << __EOF__
+FreeBSD-release: {
+  url: "pkg+http://pkg.FreeBSD.org/\${ABI}/release_$base_release",
+  mirror_type: "srv",
+  signature_type: "fingerprints",
+  fingerprints: "/usr/share/keys/pkg",
+  enabled: yes
+}
+__EOF__
+
+cat > "$cache_root"/usr/local/etc/pkg/repos/FreeBSD-latest.conf << __EOF__
+FreeBSD-latest: {
+  url: "pkg+http://pkg.FreeBSD.org/\${ABI}/latest",
+  mirror_type: "srv",
+  signature_type: "fingerprints",
+  fingerprints: "/usr/share/keys/pkg",
+  enabled: yes
+}
+__EOF__
+
+cat > "$cache_root"/usr/local/etc/pkg.conf << __EOF__
+__EOF__
+
+# fetch pkg
+if ! [ -x "$cache_root"/usr/local/sbin/pkg-static ]; then
+  fetch -o "$cache_root"/var/cache/pkg/pkg.pkg.sig \
+    https://pkg.freebsd.org/FreeBSD:"$maj":"$arch"/latest/Latest/pkg.pkg.sig
+  sed -ne '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' \
+    < "$cache_root"/var/cache/pkg/pkg.pkg.sig \
+    > "$cache_root"/var/cache/pkg/pkg.pkg.pem
+  chksum="$(openssl dgst -sha256 < "$cache_root"/var/cache/pkg/pkg.pkg.pem)"
+  grep -qr "${chksum##* }" /usr/share/keys/pkg/trusted
+  sed -e '/SIGNATURE/d' -e '/CERT/,//d' \
+    < "$cache_root"/var/cache/pkg/pkg.pkg.sig \
+    > "$cache_root"/var/cache/pkg/pkg.pkg.der
+  fetch -o "$cache_root"/var/cache/pkg/pkg.pkg \
+    https://pkg.freebsd.org/FreeBSD:"$maj":"$arch"/latest/Latest/pkg.pkg
+  chksum="$(openssl dgst -sha256 < "$cache_root"/var/cache/pkg/pkg.pkg)"
+  echo -n "${chksum##* }" > "$cache_root"/var/cache/pkg/pkg.pkg.sha256
+  openssl dgst -keyform pem -sha256 \
+    -verify "$cache_root"/var/cache/pkg/pkg.pkg.pem \
+    -signature "$cache_root"/var/cache/pkg/pkg.pkg.der \
+    -binary "$cache_root"/var/cache/pkg/pkg.pkg.sha256
+  tar -C "$cache_root" -xf "$cache_root"/var/cache/pkg/pkg.pkg \
+    /usr/local/sbin/pkg-static
+fi
+
+# update pkg
+env INSTALL_AS_USER=yes \
+    PKG_DBDIR="$cache_root"/var/db/pkg \
+    PKG_CACHEDIR="$cache_root"/var/cache/pkg \
+    "$cache_root"/usr/local/sbin/pkg-static \
+    -C "$cache_root"/usr/local/etc/pkg.conf \
+    -R "$cache_root"/usr/local/etc/pkg/repos \
+    fetch -y $pkg_packages openjdk17-jre
+
+pkg_version="$(
+  env INSTALL_AS_USER=yes \
+      PKG_DBDIR="$cache_root"/var/db/pkg \
+      PKG_CACHEDIR="$cache_root"/var/cache/pkg \
+      "$cache_root"/usr/local/sbin/pkg-static \
+      -C "$cache_root"/usr/local/etc/pkg.conf \
+      -R "$cache_root"/usr/local/etc/pkg/repos \
+      search -r FreeBSD-latest --no-repo-update \
+      -S name -L pkg-name --quiet --exact pkg
+)"
+
+pkg_static_version="pkg-$("$cache_root"/usr/local/sbin/pkg-static -v)"
+if [ "$pkg_static_version" != "$pkg_version" ]; then
+  tar -C "$cache_root" -xf "$cache_root"/var/cache/pkg/"$pkg_version".pkg \
+    /usr/local/sbin/pkg-static
+fi
+
+# update jre
+jre_version="$(
+  env INSTALL_AS_USER=yes \
+      PKG_DBDIR="$cache_root"/var/db/pkg \
+      PKG_CACHEDIR="$cache_root"/var/cache/pkg \
+      "$cache_root"/usr/local/sbin/pkg-static \
+      -C "$cache_root"/usr/local/etc/pkg.conf \
+      -R "$cache_root"/usr/local/etc/pkg/repos \
+      search -r FreeBSD-latest --no-repo-update \
+      -S name -L pkg-name --quiet --exact openjdk17-jre
+)"
+
+if ! [ -x "$cache_root"/"$jre_version" ]; then
+  tar -C "$cache_root" -xf "$cache_root"/var/cache/pkg/"$jre_version".pkg \
+    -s /.*openjdk17-jre/"$jre_version"/ \
+    /usr/local/openjdk17-jre
+fi
+
+export PATH="$cache_root"/"$jre_version"/bin:"$PATH"
+
+# generate passwd database /etc/pwd.db
+if ! [ -e "$cache_root"/etc/pwd.db ]; then
+  tar -C "$cache_root" \
+      -xf "$cache_root"/var/cache/pkg/FreeBSD-runtime-"$maj"*~*.pkg \
+      /etc/group \
+      /etc/master.passwd \
+      /usr/bin/uname
+  pwd_mkdb -i -p -d "$cache_root"/etc "$cache_root"/etc/master.passwd
+fi
+
+# ensure required files are in place
+for dir in dev var/db/pkg var/cache/pkg; do
+  mkdir -p "$jail_root"/"$dir"
+done
+
+tar -C "$cache_root" -cf - \
+    --uname root --gname wheel \
+    etc/group etc/passwd etc/pwd.db usr/bin/uname |\
+    tar -C "$jail_root" -xkf -
+
+tar -C / -cf - --uname root --gname wheel usr/share/keys/pkg |\
+  tar -C "$jail_root" -xkf -
+
+# prepare jail
+real_jail_root="$(mktemp -d /tmp/jail-XXXXXXXXXXXX)"
+real_jail_root="$(realpath "$real_jail_root")"
+jail_name="${real_jail_root##*/}"
+
+mount -t nullfs "$jail_root" "$real_jail_root"
+
+trap '"$BINDIR"/jail-cleanup -j "$jail_name" &&\
+  jail -r "$jail_name" &&\
+  umount -f "$real_jail_root" &&\
+  rmdir "$real_jail_root"' EXIT
+
+# install repo data
+mount -t tmpfs tmpfs "$real_jail_root"/var/db/pkg
+
+tar -C "$cache_root" -cf - \
+    --uname root --gname wheel \
+    --exclude var/db/pkg/local.sqlite \
+    --exclude var/db/pkg/local.sqlite-journal \
+    var/db/pkg usr/local/etc/pkg |\
+    tar -C "$real_jail_root" -xf -
+
+if [ -e "$jail_root"/var/db/pkg/local.sqlite ]; then
+  cp "$jail_root"/var/db/pkg/local.sqlite* "$real_jail_root"/var/db/pkg/
+fi
+
+# create jail
+jail -c \
+  name="$jail_name" \
+  path="$real_jail_root" \
+  mount.devfs \
+  devfs_ruleset=4 \
+  allow.chflags=1 \
+  ip4=inherit \
+  persist
+
+mount -t nullfs "$cache_root"/var/cache/pkg "$real_jail_root"/var/cache/pkg
+
+if ! [ -e "$real_jail_root"/etc/resolv.conf ]; then
+  echo -n > "$real_jail_root"/etc/resolv.conf
+fi
+
+mount -t nullfs /etc/resolv.conf "$real_jail_root"/etc/resolv.conf
+
+# turn off auto update
+export REPO_AUTOUPDATE="${REPO_AUTOUPDATE:=false}"
+
+# stage1 - install clibs
+if ! [ -e "$real_jail_root"/libexec/ld-elf.so.1 ]; then
+  echo "installing clibs..." >&2
+  "$cache_root"/usr/local/sbin/pkg-static -j "$jail_name" install -qy \
+    FreeBSD-clibs
+  cp "$real_jail_root"/var/db/pkg/local.sqlite* "$jail_root"/var/db/pkg/
+fi
+
+# stage2 - install runtime and prepare for caroot
+if ! [ -e "$real_jail_root"/bin/sh ]; then
+  echo "installing runtime..." >&2
+  "$cache_root"/usr/local/sbin/pkg-static -j "$jail_name" install -qy \
+    FreeBSD-runtime
+  cp "$real_jail_root"/var/db/pkg/local.sqlite* "$jail_root"/var/db/pkg/
+fi
+
+# stage3 - setup caroot
+if ! [ -d "$real_jail_root"/etc/ssl/certs ]; then
+  echo "installing caroot..." >&2
+  if ! [ -e "$real_jail_root"/usr/bin/openssl ]; then
+    "$cache_root"/usr/local/sbin/pkg-static -j "$jail_name" install -qy \
+      FreeBSD-openssl
+  fi
+  "$cache_root"/usr/local/sbin/pkg-static -j "$jail_name" install -qy \
+    FreeBSD-caroot FreeBSD-certctl
+  cp "$real_jail_root"/var/db/pkg/local.sqlite* "$jail_root"/var/db/pkg/
+fi
+
+# stage4 - run additional pkg commands
+if [ "$#" -gt 0 ]; then
+  "$cache_root"/usr/local/sbin/pkg-static -j "$jail_name" "$@"
+  cp "$real_jail_root"/var/db/pkg/local.sqlite* "$jail_root"/var/db/pkg/
+fi
+
+# stage5 - run additional script
+if [ -n "$post_install_script" ]; then
+  jexec "$jail_name" /bin/sh -c "$post_install_script"
+  cp "$real_jail_root"/var/db/pkg/local.sqlite* "$jail_root"/var/db/pkg/
+fi
+

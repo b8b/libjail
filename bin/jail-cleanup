@@ -65,14 +65,6 @@ fi
 
 export M2_LOCAL_REPO="$ROOTDIR"/lib
 
-case "$1" in
-'--oci-runtime-bin' | '--oci-runtime-bin='*)
-  ;;
-*)
-  set -- --oci-runtime-bin=/usr/local/bin/ocijail "$@"
-  ;;
-esac
-
 . "$kotlin_script_sh"; exit 2
 
 ///PLUGIN=org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable
@@ -117,4 +109,4 @@ esac
 ///INC=../libjail/src/main/kotlin/org/cikit/libjail/vmm.kt
 ///INC=../libjail/src/main/kotlin/org/cikit/libjail/vnet.kt
 
-///MAIN=org.cikit.oci.jail.OciJailInterceptor
+///MAIN=org.cikit.oci.jail.CleanupCommand

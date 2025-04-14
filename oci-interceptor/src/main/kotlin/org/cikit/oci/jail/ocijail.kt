@@ -4,7 +4,6 @@ import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.help
 import com.github.ajalt.clikt.parameters.options.option
-import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
 import kotlinx.coroutines.runBlocking
@@ -41,10 +40,6 @@ class OciJailInterceptor : GenericInterceptor(
     create = Create(),
     delete = Delete()
 ) {
-    init {
-        subcommands(CleanupCommand())
-    }
-
     val root by option()
         .help("Override default location for state database").path()
         .default(Path("/var/run/ocijail"))
@@ -92,44 +87,6 @@ class OciJailInterceptor : GenericInterceptor(
     companion object {
         @JvmStatic
         fun main(args: Array<String>) = OciJailInterceptor().main(args)
-    }
-}
-
-private class CleanupCommand : CliktCommand("cleanup") {
-
-    override fun help(context: Context): String {
-        return context.theme.info("Cleanup the jail with the given id")
-    }
-
-    private val runtime: OciJailInterceptor by requireObject()
-
-    private val jail by option("-j",
-        help = "Unique identifier for the jail"
-    ).required()
-
-    override fun run() {
-        runBlocking {
-            val jails = readJailParameters()
-            val parameters = jails.singleOrNull { p ->
-                p.name == jail || p.jid == jail.toIntOrNull()
-            }
-            parameters?.let { p ->
-                try {
-                    val rc = cleanup(runtime.logger, p)
-                    exitProcess(rc)
-                } catch (ex: Throwable) {
-                    throw PrintMessage(
-                        "cleanup failed: ${ex.message}",
-                        1,
-                        printError = true
-                    )
-                }
-            } ?: throw PrintMessage(
-                "jail \"$jail\" not found",
-                1,
-                printError = true
-            )
-        }
     }
 }
 

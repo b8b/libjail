@@ -38,7 +38,7 @@ private val json = Json {
 }
 
 class OciJailInterceptor : GenericInterceptor(
-    name = "ocijail-interceptor",
+    name = "intercept-ocijail",
     create = Create(),
     delete = Delete()
 ) {

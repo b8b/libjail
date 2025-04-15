@@ -1,0 +1,21 @@
+#!/bin/sh
+
+# resolve links - $0 may be a softlink
+PRG="$0"
+RPRG="$(realpath "$PRG")"
+BINDIR="${RPRG%/*}"
+ROOTDIR="${BINDIR%/*}"
+
+if [ -z "$INTERCEPT_OCI_RUNTIME_BIN" ]; then
+  if ! runtime_bin="$(command -v ocirun)"; then
+    export INTERCEPT_OCI_RUNTIME_BIN="/usr/local/bin/ocijail"
+  else
+    export INTERCEPT_OCI_RUNTIME_BIN="$runtime_bin"
+  fi
+fi
+
+export INTERCEPT_OCI_RUNTIME_NAME=ocijail
+
+script_file="$BINDIR"/intercept-oci-runtime
+. "$script_file"
+exit 2

@@ -2,18 +2,9 @@
 
 # resolve links - $0 may be a softlink
 PRG="$0"
-
-while [ -h "$PRG" ]; do
-  ls="$(ls -ld "$PRG")"
-  link="$(expr "$ls" : '.*-> \(.*\)$')"
-  if expr "$link" : '/.*' > /dev/null; then
-    PRG="$link"
-  else
-    PRG="${PRG%/*}"/"$link"
-  fi
-done
-
-BINDIR="${PRG%/*}"
+RPRG="$(realpath "$PRG")"
+BINDIR="${RPRG%/*}"
+ROOTDIR="${BINDIR%/*}"
 
 set -e
 
@@ -58,30 +49,6 @@ base_release="${base_release#0}"
 arch="$(sysctl -n hw.machine_arch)"
 
 cache_base=/var/cache/jail-install
-
-pkg_packages="FreeBSD-blocklist \
-    FreeBSD-caroot \
-    FreeBSD-certctl \
-    FreeBSD-clibs \
-    FreeBSD-fetch \
-    FreeBSD-libarchive \
-    FreeBSD-libbsm \
-    FreeBSD-libbz2 \
-    FreeBSD-libcasper \
-    FreeBSD-libldns \
-    FreeBSD-liblzma \
-    FreeBSD-libmagic \
-    FreeBSD-libucl \
-    FreeBSD-mtree \
-    FreeBSD-openssl \
-    FreeBSD-openssl-lib \
-    FreeBSD-rc \
-    FreeBSD-runtime \
-    FreeBSD-tcpd \
-    FreeBSD-ufs \
-    FreeBSD-utilities \
-    FreeBSD-zfs \
-    pkg"
 
 #################################################################
 # prepare cache
@@ -156,7 +123,7 @@ env INSTALL_AS_USER=yes \
     "$cache_root"/usr/local/sbin/pkg-static \
     -C "$cache_root"/usr/local/etc/pkg.conf \
     -R "$cache_root"/usr/local/etc/pkg/repos \
-    fetch -y $pkg_packages openjdk17-jre
+    fetch -y pkg openjdk17-jre
 
 pkg_version="$(
   env INSTALL_AS_USER=yes \
@@ -268,32 +235,34 @@ fi
 
 mount -t nullfs /etc/resolv.conf "$real_jail_root"/etc/resolv.conf
 
+#################################################################
+# install jail
+#################################################################
+
 # turn off auto update
 export REPO_AUTOUPDATE="${REPO_AUTOUPDATE:=false}"
 
-# stage1 - install clibs
+# /usr/share/zoneinfo
+
+# stage1 - "dynamic"
 if ! [ -e "$real_jail_root"/libexec/ld-elf.so.1 ]; then
   echo "installing clibs..." >&2
   "$cache_root"/usr/local/sbin/pkg-static -j "$jail_name" install -qy \
-    FreeBSD-clibs
+    FreeBSD-clibs FreeBSD-openssl-lib FreeBSD-zoneinfo
   cp "$real_jail_root"/var/db/pkg/local.sqlite* "$jail_root"/var/db/pkg/
 fi
 
-# stage2 - install runtime and prepare for caroot
+# stage2 - prepare for caroot
 if ! [ -e "$real_jail_root"/bin/sh ]; then
   echo "installing runtime..." >&2
   "$cache_root"/usr/local/sbin/pkg-static -j "$jail_name" install -qy \
-    FreeBSD-runtime
+    FreeBSD-runtime FreeBSD-openssl
   cp "$real_jail_root"/var/db/pkg/local.sqlite* "$jail_root"/var/db/pkg/
 fi
 
-# stage3 - setup caroot
+# stage3 - install caroot
 if ! [ -d "$real_jail_root"/etc/ssl/certs ]; then
   echo "installing caroot..." >&2
-  if ! [ -e "$real_jail_root"/usr/bin/openssl ]; then
-    "$cache_root"/usr/local/sbin/pkg-static -j "$jail_name" install -qy \
-      FreeBSD-openssl
-  fi
   "$cache_root"/usr/local/sbin/pkg-static -j "$jail_name" install -qy \
     FreeBSD-caroot FreeBSD-certctl
   cp "$real_jail_root"/var/db/pkg/local.sqlite* "$jail_root"/var/db/pkg/

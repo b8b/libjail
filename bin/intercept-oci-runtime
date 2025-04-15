@@ -2,51 +2,19 @@
 
 # resolve links - $0 may be a softlink
 PRG="$0"
-
-while [ -h "$PRG" ]; do
-  ls="$(ls -ld "$PRG")"
-  link="$(expr "$ls" : '.*-> \(.*\)$')"
-  if expr "$link" : '/.*' > /dev/null; then
-    PRG="$link"
-  else
-    PRG="${PRG%/*}"/"$link"
-  fi
-done
-
-BINDIR="${PRG%/*}"
+RPRG="$(realpath "$PRG")"
+BINDIR="${RPRG%/*}"
 ROOTDIR="${BINDIR%/*}"
 
-if [ "$ROOTDIR" = "$BINDIR" ]; then
-  ROOTDIR="$BINDIR"/..
+if [ -z "$M2_LOCAL_REPO" ]; then
+  export M2_LOCAL_REPO="$ROOTDIR"/lib
 fi
-
-for dir in /usr/local/sbin /usr/local/bin; do
-  case ":${PATH}:" in
-  *':'"$dir"':'*)
-    ;;
-  *)
-    export PATH="$PATH":"$dir"
-    ;;
-  esac
-done
 
 if [ -z "$java_cmd" ]; then
   if [ -x "$ROOTDIR"/jre/bin/java ]; then
     export java_cmd="$ROOTDIR"/jre/bin/java
   fi
 fi
-
-if [ -z "$M2_LOCAL_REPO" ]; then
-  export M2_LOCAL_REPO="$ROOTDIR"/lib
-fi
-
-case "$1" in
-'--oci-runtime-bin' | '--oci-runtime-bin='*)
-  ;;
-*)
-  set -- --oci-runtime-bin=/usr/local/bin/ocijail "$@"
-  ;;
-esac
 
 # __kotlin_script_installer__
 #
@@ -97,8 +65,10 @@ fi
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-ffm-jvm:3.0.2
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-graal-ffi-jvm:3.0.2
 
-///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/ocijail.kt
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/main.kt
+
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/cleanup.kt
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/ocijail.kt
 
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/GenericInterceptor.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/OciCommand.kt
@@ -123,4 +93,4 @@ fi
 ///INC=../libjail/src/main/kotlin/org/cikit/libjail/vmm.kt
 ///INC=../libjail/src/main/kotlin/org/cikit/libjail/vnet.kt
 
-///MAIN=org.cikit.oci.jail.OciJailInterceptor
+///MAIN=org.cikit.oci.MainKt

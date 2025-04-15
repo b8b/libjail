@@ -18,7 +18,7 @@ import java.nio.file.StandardOpenOption
 import kotlin.io.path.*
 
 open class GenericInterceptor(
-    name: String = "oci-interceptor",
+    name: String = "intercept-oci-runtime",
     create: CreateCommand = Create(),
     delete: DeleteCommand = Delete(),
     exec: ExecCommand = Exec(),
@@ -42,7 +42,9 @@ open class GenericInterceptor(
         return context.theme.info("intercept oci runtime invocation")
     }
 
-    protected open val ociRuntimeBin by option()
+    protected open val ociRuntimeBin by option(
+        envvar = "INTERCEPT_OCI_RUNTIME_BIN"
+    )
         .help("Path to oci runtime")
         .path(mustExist = true, canBeDir = false)
         .required()
@@ -339,11 +341,6 @@ open class GenericInterceptor(
             }
             runtime.callOciRuntime(this)
         }
-    }
-
-    companion object {
-        @JvmStatic
-        fun main(args: Array<String>) = GenericInterceptor().main(args)
     }
 
 }

@@ -1,0 +1,245 @@
+#!/bin/sh
+
+set -e
+
+# resolve links - $0 may be a softlink
+PRG="$0"
+RPRG="$(realpath "$PRG")"
+BINDIR="${RPRG%/*}"
+ROOTDIR="${BINDIR%/*}"
+
+: ${JPKG_CACHE_BASE:=/var/cache/jpkg}
+: ${JPKG_CHECK_PKG_VERSION:=yes}
+
+if [ -z "$M2_LOCAL_REPO" ]; then
+  export M2_LOCAL_REPO="$ROOTDIR"/lib
+fi
+
+if [ -z "$java_cmd" ]; then
+  if [ -x "$ROOTDIR"/jre/bin/java ]; then
+    export java_cmd="$ROOTDIR"/jre/bin/java
+  fi
+fi
+
+os_reldate="$(sysctl -n kern.osreldate)"
+v_maj="${os_reldate%[0-9][0-9][0-9][0-9][0-9]}"
+v_min="${os_reldate%[0-9][0-9][0-9]}"
+v_min="${v_min#$v_maj}"
+v_min="${v_min#0}"
+arch="$(sysctl -n hw.machine_arch)"
+
+repo_config()
+{
+  local name="$1"
+  local url="$2"
+  printf '%s: {
+    url: "%s",
+    mirror_type: "srv",
+    signature_type: "fingerprints",
+    fingerprints: "/usr/share/keys/pkg",
+    enabled: yes\n}\n' "$name" "$url"
+}
+
+fetch_pkg()
+{
+  local trusted_keys=/usr/share/keys/pkg/trusted
+  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
+
+  local fetch_cmd="$(command -v fetch) --no-verify-peer -aAqo"
+  if ! [ "$?" -eq 0 ]; then
+    fetch_cmd="$(command -v curl) -kfLSso" || \
+    fetch_cmd="wget --no-check-certificate -qO"
+  fi
+
+  $fetch_cmd "$cache_root"/var/cache/pkg/pkg.pkg.sig \
+    https://pkg.freebsd.org/FreeBSD:"$v_maj":"$arch"/latest/Latest/pkg.pkg.sig
+  sed -ne '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' \
+    < "$cache_root"/var/cache/pkg/pkg.pkg.sig \
+    > "$cache_root"/var/cache/pkg/pkg.pkg.pem
+  sed -e '/SIGNATURE/d' -e '/CERT/,//d' \
+    < "$cache_root"/var/cache/pkg/pkg.pkg.sig \
+    > "$cache_root"/var/cache/pkg/pkg.pkg.der
+  chksum="$(openssl dgst -sha256 < "$cache_root"/var/cache/pkg/pkg.pkg.pem)"
+  if ! grep -qr "${chksum##* }" "$trusted_keys"; then
+    echo "pkg signature invalid: fingerprint not found in $trusted_keys" >& 2
+    exit 1
+  fi
+
+  $fetch_cmd "$cache_root"/var/cache/pkg/pkg.pkg \
+    https://pkg.freebsd.org/FreeBSD:"$v_maj":"$arch"/latest/Latest/pkg.pkg
+  chksum="$(openssl dgst -sha256 < "$cache_root"/var/cache/pkg/pkg.pkg)"
+  echo -n "${chksum##* }" > "$cache_root"/var/cache/pkg/pkg.pkg.sha256
+  openssl dgst -keyform pem -sha256 \
+    -verify "$cache_root"/var/cache/pkg/pkg.pkg.pem \
+    -signature "$cache_root"/var/cache/pkg/pkg.pkg.der \
+    -binary "$cache_root"/var/cache/pkg/pkg.pkg.sha256
+  if ! [ "$?" -eq 0 ]; then
+    echo "failed to verify pkg." >&2
+    exit 1
+  fi
+
+  tar -C "$cache_root" \
+    -xf "$cache_root"/var/cache/pkg/pkg.pkg \
+    -s '|^/||' /usr/local/sbin/pkg-static
+  if ! [ "$?" -eq 0 ]; then
+    rm -f "$cache_root"/usr/local/sbin/pkg-static
+    exit 1
+  fi
+}
+
+run_pkg_bin()
+{
+  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
+  local pkg_bin="$cache_root"/usr/local/sbin/pkg-static
+  INSTALL_AS_USER=yes \
+  PKG_DBDIR="$cache_root"/var/db/pkg \
+  PKG_CACHEDIR="$cache_root"/var/cache/pkg \
+    "$pkg_bin" \
+    -C "$cache_root"/usr/local/etc/pkg.conf \
+    -R "$cache_root"/usr/local/etc/pkg/repos \
+    "$@"
+}
+
+run_pkg()
+{
+  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
+  local pkg_bin="$cache_root"/usr/local/sbin/pkg-static
+
+  mkdir -p "$cache_root"/usr/local/etc/pkg/repos
+  echo -n > "$cache_root"/usr/local/etc/pkg.conf
+  repo_config "base" \
+              "pkg+http://pkg.FreeBSD.org/\${ABI}/base_release_$v_min" \
+              > "$cache_root"/usr/local/etc/pkg/repos/base.conf
+  repo_config "FreeBSD-release" \
+              "pkg+http://pkg.FreeBSD.org/\${ABI}/release_$v_min" \
+              > "$cache_root"/usr/local/etc/pkg/repos/FreeBSD-release.conf
+  repo_config "FreeBSD-latest" \
+              "pkg+http://pkg.FreeBSD.org/\${ABI}/latest" \
+              > "$cache_root"/usr/local/etc/pkg/repos/FreeBSD-latest.conf
+
+  if ! [ -x "$pkg_bin" ]; then
+    fetch_pkg
+    # trigger repo update
+    run_pkg_bin search --quiet -r FreeBSD-latest \
+                 -S name -L pkg-name --exact pkg
+    export REPO_AUTOUPDATE=false
+  elif [ "$JPKG_CHECK_PKG_VERSION" = yes ]; then
+    run_pkg_bin fetch -y pkg
+    export REPO_AUTOUPDATE=false
+    local pkg_bin_version=pkg-"$("$pkg_bin" -v)"
+    local pkg_latest_version="$(
+      run_pkg_bin search --quiet -r FreeBSD-latest \
+                 -S name -L pkg-name --exact pkg
+    )"
+    if ! [ "$pkg_bin_version" = "$pkg_latest_version" ]; then
+      echo "updating pkg: $pkg_bin_version -> $pkg_latest_version" >&2
+      tar -C "$cache_root" \
+          -xf "$cache_root"/var/cache/pkg/"$pkg_latest_version".pkg \
+          -s '|^/||' /usr/local/sbin/pkg-static
+      if ! [ "$?" -eq 0 ]; then exit 1; fi
+    fi
+    JPKG_CHECK_PKG_VERSION=done
+  fi
+
+  run_pkg_bin "$@"
+}
+
+run_pkg_search_version()
+{
+  local pkg_name="$1"
+  local pkg_repo="${pkg_name%%/*}"
+  if [ "$pkg_name" = "$pkg_repo" ]; then
+    pkg_repo=base
+  else
+    pkg_name="${pkg_name#*/}"
+  fi
+  run_pkg search --quiet -r "$pkg_repo" -S name -L pkg-name --exact "$pkg_name"
+}
+
+create_static_layer()
+{
+  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
+  local line
+  local v
+
+  #TODO not quiet
+  run_pkg fetch --quiet FreeBSD-caroot FreeBSD-runtime
+
+  # required to run scripts:
+  #   * FreeBSD-clibs FreeBSD-openssl-lib
+  #   * FreeBSD-runtime FreeBSD-openssl"
+  # (but will use locally installed tools instead)
+
+  if ! v="$(run_pkg_search_version FreeBSD-runtime)"; then
+    echo "error finding FreeBSD-runtime in remote repositories" >&2
+    exit 1
+  fi
+  if ! read line 2>&- < "$cache_root"/.runtime_version ||\
+     ! [ "$line" = "$v" ]; then
+    echo "updating FreeBSD-runtime..." >&2
+    #TODO extract directly on jail_root
+    tar -C "$cache_root" \
+        -xf "$cache_root"/var/cache/pkg/"$v".pkg -s '|^/||' \
+        /etc/group /etc/master.passwd /etc/services /usr/bin/uname
+    pwd_mkdb -i -p -d "$cache_root"/etc "$cache_root"/etc/master.passwd
+    mkdir -p "$cache_root"/var/db
+    services_mkdb -l -q -o "$cache_root"/var/db/services.db "$cache_root"/
+    echo "$v" > "$cache_root"/.runtime_version
+  fi
+
+  # rehash certificates
+  if ! v="$(run_pkg_search_version FreeBSD-caroot)"; then
+    echo "error finding FreeBSD-caroot in remote repositories" >&2
+  fi
+  if ! read line 2>&- < "$cache_root"/.caroot_version ||\
+     ! [ "$line" = "$v" ]; then
+    echo "updating FreeBSD-caroot..." >&2
+    #TODO can simply install FreeBSD-caroot on jail_root
+    tar -C "$cache_root" \
+        -xf "$cache_root"/var/cache/pkg/"$v".pkg \
+        -s "|^/usr/share/certs|usr/share/$v|" \
+        /usr/share/certs
+    #almost atomic
+    mv -f "$cache_root"/usr/share/certs "$cache_root"/usr/share/certs~
+    mv -f "$cache_root"/usr/share/"$v" "$cache_root"/usr/share/certs
+    # rehash certs
+    certctl -D "$cache_root" rehash
+    echo "$v" > "$cache_root"/.caroot_version
+  fi
+}
+
+install_jre()
+{
+  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
+  local line
+  local v
+
+  run_pkg fetch -y openjdk17-jre
+  if ! v="$(run_pkg_search_version FreeBSD-latest/openjdk17-jre)" &&\
+     ! v="$(run_pkg_search_version FreeBSD-release/openjdk17-jre)"
+  then
+    echo "error finding openjdk17-jre in remote repositories" >&2
+    exit 1
+  fi
+
+  if ! read line 2>&- < "$cache_root"/.openjdk17-jre_version ||\
+     ! [ "$line" = "$v" ]
+  then
+    echo "updating openjdk17-jre..." >&2
+    rm -Rf "$cache_root"/usr/local/openjdk17-jre
+    tar -C "$cache_root" \
+        -xf "$cache_root"/var/cache/pkg/"$v".pkg \
+        -s "|^/usr/local/openjdk17-jre|usr/local/$v|" \
+        /usr/local/openjdk17-jre
+    ln -fs "$v" "$cache_root"/usr/local/openjdk17-jre
+    echo "$v" > "$cache_root"/.openjdk17-jre_version
+  fi
+}
+
+# get installed version (repo '/' name-version)
+# pkg query -e '%n = "pkg"' %R/%n-%v
+
+#create_static_layer
+#run_pkg "$@"
+
+install_jre

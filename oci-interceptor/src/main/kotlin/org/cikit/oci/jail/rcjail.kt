@@ -10,7 +10,11 @@ import org.cikit.libjail.readJailParameters
 import org.cikit.oci.OciLogger
 import kotlin.system.exitProcess
 
-class CleanupCommand : CliktCommand("cleanup") {
+class RcJailInterceptor : CliktCommand("intercept-rcjail") {
+
+    init {
+        subcommands(CleanupCommand())
+    }
 
     override fun help(context: Context): String {
         return context.theme.info("Cleanup the jail with the given id")
@@ -25,13 +29,31 @@ class CleanupCommand : CliktCommand("cleanup") {
     private val logLevel by option()
         .help("Log level")
 
-    private val logger by lazy {
-        OciLogger(
-            logFile = log,
-            logFormat = logFormat,
-            logLevel = logLevel
-        )
+    override fun run() {
+        if (currentContext.invokedSubcommand == null) {
+            throw PrintHelpMessage(
+                currentContext,
+                error = true,
+                statusCode = 1
+            )
+        }
+        currentContext.findOrSetObject {
+            OciLogger(
+                logFile = log,
+                logFormat = logFormat,
+                logLevel = logLevel
+            )
+        }
     }
+}
+
+class CleanupCommand : CliktCommand("cleanup") {
+
+    override fun help(context: Context): String {
+        return context.theme.info("Cleanup the jail with the given id")
+    }
+
+    private val logger by requireObject<OciLogger>()
 
     private val jail by option("-j",
         help = "Unique identifier for the jail"
@@ -61,10 +83,5 @@ class CleanupCommand : CliktCommand("cleanup") {
                 printError = true
             )
         }
-    }
-
-    companion object {
-        @JvmStatic
-        fun main(args: Array<String>) = CleanupCommand().main(args)
     }
 }

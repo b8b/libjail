@@ -67,8 +67,8 @@ fi
 
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/main.kt
 
-///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/cleanup.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/ocijail.kt
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/rcjail.kt
 
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/GenericInterceptor.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/OciCommand.kt

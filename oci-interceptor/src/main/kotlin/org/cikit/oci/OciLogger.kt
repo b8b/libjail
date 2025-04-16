@@ -129,6 +129,12 @@ class OciLogger(
                 evMsgString = "+ ${ev.args.joinToString(" ")}"
             }
 
+            is TraceEvent.Debug -> {
+                evLevel = 2
+                evLevelString = "debug"
+                evMsgString = ev.msg
+            }
+
             is TraceEvent.Info -> {
                 evLevel = 1
                 evLevelString = "info"

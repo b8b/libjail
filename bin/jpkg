@@ -20,8 +20,16 @@ v_min="${v_min#0}"
 arch="$(sysctl -n hw.machine_arch)"
 
 trusted_keys=/usr/share/keys/pkg/trusted
-cache_subdir=FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
-cache_root="$JPKG_CACHE_BASE"/"$cache_subdir"
+cache_root=
+
+case "$os_reldate" in
+*000)
+  cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"-"$arch"/r"$v_min"
+  ;;
+*)
+  cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"-"$arch"/"$os_reldate"
+  ;;
+esac
 
 repo_config()
 {
@@ -115,20 +123,26 @@ init_pkg()
 
   #trigger update and read latest version
   local pkg_latest_version=
+  local current_version=
   while read -r line; do
     case "$line" in
-    ==FreeBSD-latest==*)
-      pkg_latest_version="${line#==FreeBSD-latest==}"
+    Repository[[:space:]]*:[[:space:]]*FreeBSD-latest[[:space:]]*)
+      pkg_latest_version="$current_version"
       ;;
-    ==*)
+    *:*)
       ;;
     *)
-      echo "$line"
+      current_version="$line"
       ;;
     esac
   done << __EOF__
-$(run_pkg rquery -e '%n = pkg' ==%R==%n-%v)
+$(run_pkg search -L pkg-name -Q repository -S name --exact pkg)
 __EOF__
+
+  if [ -z "$pkg_latest_version" ]; then
+    echo "error getting latest pkg version!" >&2
+    exit 1
+  fi
 
   local pkg_bin_version=pkg-"$("$pkg_bin" -v)"
   if ! [ "$pkg_bin_version" = "$pkg_latest_version" ]; then

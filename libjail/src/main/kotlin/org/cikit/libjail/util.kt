@@ -10,7 +10,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
-
 sealed class TraceEvent {
     class Ffi(
         val func: String,
@@ -28,6 +27,7 @@ sealed class TraceEvent {
         constructor(vararg arg: String) : this(arg.toList())
     }
 
+    class Debug(val msg: String) : TraceEvent()
     class Info(val msg: String) : TraceEvent()
     class Warn(val msg: String, val ex: Throwable? = null) : TraceEvent()
     class Err(val msg: String, val ex: Throwable? = null) : TraceEvent()
@@ -49,23 +49,6 @@ fun registerTraceFunction(traceFunction: (TraceEvent) -> TraceControl) {
         traceFunctions.addFirst(traceFunction)
     }
 }
-
-/*
-fun trace(level: Int, vararg args: String?) {
-    trace(level, args.filterNotNull())
-}
-
-fun trace(level: Int, args: List<String>) {
-    val line = if (level > 1) {
-        "+ ${args.joinToString(" ")}"
-    } else {
-        args.joinToString(" ")
-    }
-    val ev = TraceEvent.Info(level, line)
-    trace(ev)
-}
-
- */
 
 internal fun trace(ev: TraceEvent) {
     synchronized(traceFunctions) {

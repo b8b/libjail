@@ -86,10 +86,10 @@ suspend fun cleanup(
 
     if (!attach) {
         if (probeNullFs.isNotEmpty()) {
-            trace(TraceEvent.Warn("skip probe unmounting nullfs"))
+            trace(TraceEvent.Debug("skip probe unmounting nullfs"))
         }
         if (vmmDevices.isNotEmpty()) {
-            trace(TraceEvent.Warn("skip probe destroying vmm devices"))
+            trace(TraceEvent.Debug("skip probe destroying vmm devices"))
         }
         return rcAll
     }

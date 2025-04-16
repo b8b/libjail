@@ -6,6 +6,7 @@ import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.theme
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.multiple
+import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.help
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
@@ -34,6 +35,7 @@ class JPkgCommand : CliktCommand("jpkg") {
 
     private val logLevel by option()
         .help("Log level")
+        .default("warn")
 
     private val pkgBin by option(envvar = "JPKG_PKG_BIN")
         .help("path to pkg binary")
@@ -43,10 +45,16 @@ class JPkgCommand : CliktCommand("jpkg") {
         .help("base path to local cache")
         .path(canBeFile = false)
 
-    private val root by option("-r", "--rootdir")
+    private val root by option("-r", "--rootdir", "-c", "--chroot")
         .help("path to jail root directory")
         .path(canBeFile = false)
         .required()
+
+    private val execStart by option()
+        .help("commands to run in the jail environment before running pkg")
+
+    private val execStop by option()
+        .help("commands to run in the jail environment after running pkg")
 
     private val args by argument("PKG_ARG").multiple()
 
@@ -55,9 +63,14 @@ class JPkgCommand : CliktCommand("jpkg") {
 
     private fun cacheRoot(): Path {
         val base = pkgCacheBase ?: Path("/var/cache/jpkg")
-        val maj = osRelDate / 100_000
-        val min = osRelDate / 1_000 - maj * 100
-        return base / "FreeBSD-$maj.$min-RELEASE-$arch"
+        val major = osRelDate / 100_000
+        val minor = osRelDate / 1_000 - major * 100
+        val snapshot = osRelDate % 1_000
+        return if (snapshot == 0) {
+            base / "FreeBSD-$major-$arch" / "r$minor"
+        } else {
+            base / "FreeBSD-$major-$arch" / "%07d".format(osRelDate)
+        }
     }
 
     @OptIn(ExperimentalPathApi::class)
@@ -84,12 +97,12 @@ class JPkgCommand : CliktCommand("jpkg") {
         if (!rootResolvConf.exists()) {
             rootResolvConf.writeText("")
         }
-        val rootUname = (root / "usr/bin").createDirectories() / "uname"
         val runtimePkg by lazy {
             runPkg("fetch", "--quiet", "-y", "FreeBSD-runtime")
             val pkgName = runPkgSearchVersion("FreeBSD-runtime")
             cacheRoot / pkgCacheDir / "$pkgName.pkg"
         }
+        val rootUname = (root / "usr/bin").createDirectories() / "uname"
         if (!rootUname.exists()) {
             val rc = ProcessBuilder(
                 "tar",
@@ -251,17 +264,45 @@ class JPkgCommand : CliktCommand("jpkg") {
             readOnly = true
         )
 
-        val rc = ProcessBuilder("/bin/sh")
-            .inheritIO()
-            .apply {
-                environment()["JAIL"] = jail.name
-                environment()["JID"] = jail.jid.toString()
-                environment()["PKG"] = pkgBin?.pathString ?: "pkg"
+        execStart?.let { cmd ->
+            val rc = ProcessBuilder(
+                "jexec", jail.jid.toString(), "/bin/sh", "-c", cmd
+            )
+                .inheritIO()
+                .start()
+                .waitFor()
+            require(rc == 0) {
+                "--exec-start command failed with exit code $rc"
             }
-            .start()
-            .waitFor()
-        if (rc != 0) {
-            throw ProgramResult(rc)
+        }
+
+        if (args.isNotEmpty()) {
+            val rc = ProcessBuilder(
+                pkgBin?.pathString ?: "pkg",
+                "-j", jail.jid.toString(),
+                *args.toTypedArray()
+            )
+                .inheritIO()
+                .apply {
+                    environment()["REPO_AUTOUPDATE"] = "false"
+                }
+                .start()
+                .waitFor()
+            if (rc != 0) {
+                throw ProgramResult(rc)
+            }
+        }
+
+        execStop?.let { cmd ->
+            val rc = ProcessBuilder(
+                "jexec", jail.jid.toString(), "/bin/sh", "-c", cmd
+            )
+                .inheritIO()
+                .start()
+                .waitFor()
+            require(rc == 0) {
+                "--exec-stop command failed with exit code $rc"
+            }
         }
     }
 

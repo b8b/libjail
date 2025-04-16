@@ -8,18 +8,9 @@ RPRG="$(realpath "$PRG")"
 BINDIR="${RPRG%/*}"
 ROOTDIR="${BINDIR%/*}"
 
-: ${JPKG_CACHE_BASE:=/var/cache/jpkg}
-: ${JPKG_CHECK_PKG_VERSION:=yes}
-
-if [ -z "$M2_LOCAL_REPO" ]; then
-  export M2_LOCAL_REPO="$ROOTDIR"/lib
-fi
-
-if [ -z "$java_cmd" ]; then
-  if [ -x "$ROOTDIR"/jre/bin/java ]; then
-    export java_cmd="$ROOTDIR"/jre/bin/java
-  fi
-fi
+: ${JPKG_CACHE_BASE:="$ROOTDIR"/cache}
+: ${JPKG_INSTALL_JRE:=false}
+: ${JPKG_SITE:=pkg.FreeBSD.org}
 
 os_reldate="$(sysctl -n kern.osreldate)"
 v_maj="${os_reldate%[0-9][0-9][0-9][0-9][0-9]}"
@@ -27,6 +18,10 @@ v_min="${os_reldate%[0-9][0-9][0-9]}"
 v_min="${v_min#$v_maj}"
 v_min="${v_min#0}"
 arch="$(sysctl -n hw.machine_arch)"
+
+trusted_keys=/usr/share/keys/pkg/trusted
+cache_subdir=FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
+cache_root="$JPKG_CACHE_BASE"/"$cache_subdir"
 
 repo_config()
 {
@@ -42,17 +37,15 @@ repo_config()
 
 fetch_pkg()
 {
-  local trusted_keys=/usr/share/keys/pkg/trusted
-  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
-
-  local fetch_cmd="$(command -v fetch) --no-verify-peer -aAqo"
-  if ! [ "$?" -eq 0 ]; then
-    fetch_cmd="$(command -v curl) -kfLSso" || \
+  local fetch_cmd
+  fetch_cmd="$(command -v curl) -kfLSso" || \
+    fetch_cmd="$(command -v fetch) --no-verify-peer -aAqo" || \
     fetch_cmd="wget --no-check-certificate -qO"
-  fi
 
+  echo "fetching pkg..." >&2
+  mkdir -p "$cache_root"/var/cache/pkg
   $fetch_cmd "$cache_root"/var/cache/pkg/pkg.pkg.sig \
-    https://pkg.freebsd.org/FreeBSD:"$v_maj":"$arch"/latest/Latest/pkg.pkg.sig
+    https://"$JPKG_SITE"/FreeBSD:"$v_maj":"$arch"/latest/Latest/pkg.pkg.sig
   sed -ne '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' \
     < "$cache_root"/var/cache/pkg/pkg.pkg.sig \
     > "$cache_root"/var/cache/pkg/pkg.pkg.pem
@@ -66,14 +59,15 @@ fetch_pkg()
   fi
 
   $fetch_cmd "$cache_root"/var/cache/pkg/pkg.pkg \
-    https://pkg.freebsd.org/FreeBSD:"$v_maj":"$arch"/latest/Latest/pkg.pkg
+    https://"$JPKG_SITE"/FreeBSD:"$v_maj":"$arch"/latest/Latest/pkg.pkg
   chksum="$(openssl dgst -sha256 < "$cache_root"/var/cache/pkg/pkg.pkg)"
   echo -n "${chksum##* }" > "$cache_root"/var/cache/pkg/pkg.pkg.sha256
-  openssl dgst -keyform pem -sha256 \
+  local output="$(openssl dgst -keyform pem -sha256 \
     -verify "$cache_root"/var/cache/pkg/pkg.pkg.pem \
     -signature "$cache_root"/var/cache/pkg/pkg.pkg.der \
-    -binary "$cache_root"/var/cache/pkg/pkg.pkg.sha256
+    -binary "$cache_root"/var/cache/pkg/pkg.pkg.sha256 2>&1)"
   if ! [ "$?" -eq 0 ]; then
+    echo "$output" >&2
     echo "failed to verify pkg." >&2
     exit 1
   fi
@@ -87,9 +81,8 @@ fetch_pkg()
   fi
 }
 
-run_pkg_bin()
+run_pkg()
 {
-  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
   local pkg_bin="$cache_root"/usr/local/sbin/pkg-static
   INSTALL_AS_USER=yes \
   PKG_DBDIR="$cache_root"/var/db/pkg \
@@ -100,48 +93,52 @@ run_pkg_bin()
     "$@"
 }
 
-run_pkg()
+init_pkg()
 {
-  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
   local pkg_bin="$cache_root"/usr/local/sbin/pkg-static
 
   mkdir -p "$cache_root"/usr/local/etc/pkg/repos
   echo -n > "$cache_root"/usr/local/etc/pkg.conf
   repo_config "base" \
-              "pkg+http://pkg.FreeBSD.org/\${ABI}/base_release_$v_min" \
+              "pkg+http://$JPKG_SITE/\${ABI}/base_release_$v_min" \
               > "$cache_root"/usr/local/etc/pkg/repos/base.conf
   repo_config "FreeBSD-release" \
-              "pkg+http://pkg.FreeBSD.org/\${ABI}/release_$v_min" \
+              "pkg+http://$JPKG_SITE/\${ABI}/release_$v_min" \
               > "$cache_root"/usr/local/etc/pkg/repos/FreeBSD-release.conf
   repo_config "FreeBSD-latest" \
-              "pkg+http://pkg.FreeBSD.org/\${ABI}/latest" \
+              "pkg+http://$JPKG_SITE/\${ABI}/latest" \
               > "$cache_root"/usr/local/etc/pkg/repos/FreeBSD-latest.conf
 
   if ! [ -x "$pkg_bin" ]; then
     fetch_pkg
-    # trigger repo update
-    run_pkg_bin search --quiet -r FreeBSD-latest \
-                 -S name -L pkg-name --exact pkg
-    export REPO_AUTOUPDATE=false
-  elif [ "$JPKG_CHECK_PKG_VERSION" = yes ]; then
-    run_pkg_bin fetch -y pkg
-    export REPO_AUTOUPDATE=false
-    local pkg_bin_version=pkg-"$("$pkg_bin" -v)"
-    local pkg_latest_version="$(
-      run_pkg_bin search --quiet -r FreeBSD-latest \
-                 -S name -L pkg-name --exact pkg
-    )"
-    if ! [ "$pkg_bin_version" = "$pkg_latest_version" ]; then
-      echo "updating pkg: $pkg_bin_version -> $pkg_latest_version" >&2
-      tar -C "$cache_root" \
-          -xf "$cache_root"/var/cache/pkg/"$pkg_latest_version".pkg \
-          -s '|^/||' /usr/local/sbin/pkg-static
-      if ! [ "$?" -eq 0 ]; then exit 1; fi
-    fi
-    JPKG_CHECK_PKG_VERSION=done
   fi
 
-  run_pkg_bin "$@"
+  #trigger update and read latest version
+  local pkg_latest_version=
+  while read -r line; do
+    case "$line" in
+    ==FreeBSD-latest==*)
+      pkg_latest_version="${line#==FreeBSD-latest==}"
+      ;;
+    ==*)
+      ;;
+    *)
+      echo "$line"
+      ;;
+    esac
+  done << __EOF__
+$(run_pkg rquery -e '%n = pkg' ==%R==%n-%v)
+__EOF__
+
+  local pkg_bin_version=pkg-"$("$pkg_bin" -v)"
+  if ! [ "$pkg_bin_version" = "$pkg_latest_version" ]; then
+    echo "updating pkg: $pkg_bin_version -> $pkg_latest_version" >&2
+    run_pkg fetch --quiet --no-repo-update -r FreeBSD-latest -y pkg
+    tar -C "$cache_root" \
+        -xf "$cache_root"/var/cache/pkg/"$pkg_latest_version".pkg \
+        -s '|^/||' /usr/local/sbin/pkg-static
+    if ! [ "$?" -eq 0 ]; then exit 1; fi
+  fi
 }
 
 run_pkg_search_version()
@@ -153,12 +150,12 @@ run_pkg_search_version()
   else
     pkg_name="${pkg_name#*/}"
   fi
-  run_pkg search --quiet -r "$pkg_repo" -S name -L pkg-name --exact "$pkg_name"
+  run_pkg search --quiet --no-repo-update \
+          -r "$pkg_repo" -S name -L pkg-name --exact "$pkg_name"
 }
 
-create_static_layer()
+X_create_static_layer()
 {
-  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
   local line
   local v
 
@@ -210,11 +207,8 @@ create_static_layer()
 
 install_jre()
 {
-  local cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"."$v_min"-RELEASE-"$arch"
-  local line
   local v
 
-  run_pkg fetch -y openjdk17-jre
   if ! v="$(run_pkg_search_version FreeBSD-latest/openjdk17-jre)" &&\
      ! v="$(run_pkg_search_version FreeBSD-release/openjdk17-jre)"
   then
@@ -222,24 +216,44 @@ install_jre()
     exit 1
   fi
 
-  if ! read line 2>&- < "$cache_root"/.openjdk17-jre_version ||\
-     ! [ "$line" = "$v" ]
-  then
+  if ! [ -x "$cache_root"/usr/local/"$v"/bin/java ]; then
     echo "updating openjdk17-jre..." >&2
-    rm -Rf "$cache_root"/usr/local/openjdk17-jre
+    run_pkg fetch -y openjdk17-jre
+    rm -Rf "$cache_root"/usr/local/"$v"
+    local tmpdir=usr/local/."$$"."$v"
+
+    mkdir "$cache_root"/"$tmpdir" &&\
     tar -C "$cache_root" \
         -xf "$cache_root"/var/cache/pkg/"$v".pkg \
-        -s "|^/usr/local/openjdk17-jre|usr/local/$v|" \
-        /usr/local/openjdk17-jre
-    ln -fs "$v" "$cache_root"/usr/local/openjdk17-jre
-    echo "$v" > "$cache_root"/.openjdk17-jre_version
+        -s "|^/usr/local/openjdk17-jre|$tmpdir/$v|" \
+        /usr/local/openjdk17-jre &&\
+    mv "$cache_root"/"$tmpdir"/"$v" "$cache_root"/usr/local/ &&\
+    rmdir "$cache_root"/"$tmpdir"
+
+    if ! [ "$?" -eq 0 ]; then
+      echo "error extracting openjdk17-jre" >&2
+      rm -Rf "$tmpdir"
+      exit 1
+    fi
   fi
+
+  export java_cmd="$cache_root"/usr/local/"$v"/bin/java
 }
 
-# get installed version (repo '/' name-version)
-# pkg query -e '%n = "pkg"' %R/%n-%v
+init_pkg
 
-#create_static_layer
-#run_pkg "$@"
+if [ -z "$M2_LOCAL_REPO" ]; then
+  export M2_LOCAL_REPO="$JPGG_CACHE_BASE"/lib
+fi
 
-install_jre
+if [ -z "$java_cmd" ]; then
+  if [ "$JPKG_INSTALL_JRE" = "true" ] || ! java_cmd="$(command -v java)"; then
+    install_jre
+  fi
+fi
+
+export INTERCEPT_OCI_RUNTIME_NAME=jpkg
+
+script_file="$BINDIR"/intercept-oci-runtime
+. "$script_file"
+exit 2

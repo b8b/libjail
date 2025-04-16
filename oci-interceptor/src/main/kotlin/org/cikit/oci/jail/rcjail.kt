@@ -17,7 +17,7 @@ class RcJailInterceptor : CliktCommand("intercept-rcjail") {
     }
 
     override fun help(context: Context): String {
-        return context.theme.info("Cleanup the jail with the given id")
+        return context.theme.info("Helper for /etc/rc.d/jail")
     }
 
     private val log by option()

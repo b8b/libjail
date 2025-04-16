@@ -61,12 +61,13 @@ fi
 ///DEP=com.github.ajalt.mordant:mordant-core-jvm:3.0.2
 ///DEP=com.github.ajalt.colormath:colormath-jvm:3.6.0
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-jna-jvm:3.0.2
-///DEP=net.java.dev.jna:jna:5.14.0
+///DEP=net.java.dev.jna:jna:5.15.0
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-ffm-jvm:3.0.2
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-graal-ffi-jvm:3.0.2
 
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/main.kt
 
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/jpkg.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/ocijail.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/rcjail.kt
 

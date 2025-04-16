@@ -154,57 +154,6 @@ run_pkg_search_version()
           -r "$pkg_repo" -S name -L pkg-name --exact "$pkg_name"
 }
 
-X_create_static_layer()
-{
-  local line
-  local v
-
-  #TODO not quiet
-  run_pkg fetch --quiet FreeBSD-caroot FreeBSD-runtime
-
-  # required to run scripts:
-  #   * FreeBSD-clibs FreeBSD-openssl-lib
-  #   * FreeBSD-runtime FreeBSD-openssl"
-  # (but will use locally installed tools instead)
-
-  if ! v="$(run_pkg_search_version FreeBSD-runtime)"; then
-    echo "error finding FreeBSD-runtime in remote repositories" >&2
-    exit 1
-  fi
-  if ! read line 2>&- < "$cache_root"/.runtime_version ||\
-     ! [ "$line" = "$v" ]; then
-    echo "updating FreeBSD-runtime..." >&2
-    #TODO extract directly on jail_root
-    tar -C "$cache_root" \
-        -xf "$cache_root"/var/cache/pkg/"$v".pkg -s '|^/||' \
-        /etc/group /etc/master.passwd /etc/services /usr/bin/uname
-    pwd_mkdb -i -p -d "$cache_root"/etc "$cache_root"/etc/master.passwd
-    mkdir -p "$cache_root"/var/db
-    services_mkdb -l -q -o "$cache_root"/var/db/services.db "$cache_root"/
-    echo "$v" > "$cache_root"/.runtime_version
-  fi
-
-  # rehash certificates
-  if ! v="$(run_pkg_search_version FreeBSD-caroot)"; then
-    echo "error finding FreeBSD-caroot in remote repositories" >&2
-  fi
-  if ! read line 2>&- < "$cache_root"/.caroot_version ||\
-     ! [ "$line" = "$v" ]; then
-    echo "updating FreeBSD-caroot..." >&2
-    #TODO can simply install FreeBSD-caroot on jail_root
-    tar -C "$cache_root" \
-        -xf "$cache_root"/var/cache/pkg/"$v".pkg \
-        -s "|^/usr/share/certs|usr/share/$v|" \
-        /usr/share/certs
-    #almost atomic
-    mv -f "$cache_root"/usr/share/certs "$cache_root"/usr/share/certs~
-    mv -f "$cache_root"/usr/share/"$v" "$cache_root"/usr/share/certs
-    # rehash certs
-    certctl -D "$cache_root" rehash
-    echo "$v" > "$cache_root"/.caroot_version
-  fi
-}
-
 install_jre()
 {
   local v
@@ -237,7 +186,7 @@ install_jre()
     fi
   fi
 
-  export java_cmd="$cache_root"/usr/local/"$v"/bin/java
+  java_cmd="$cache_root"/usr/local/"$v"/bin/java
 }
 
 init_pkg
@@ -253,6 +202,9 @@ if [ -z "$java_cmd" ]; then
 fi
 
 export INTERCEPT_OCI_RUNTIME_NAME=jpkg
+
+export JPKG_PKG_BIN="$cache_root"/usr/local/sbin/pkg-static
+export JPKG_CACHE_BASE="$JPKG_CACHE_BASE"
 
 script_file="$BINDIR"/intercept-oci-runtime
 . "$script_file"

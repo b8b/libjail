@@ -5,7 +5,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 
-suspend fun cleanup(jail: JailParameters): Int {
+suspend fun cleanup(
+    jail: JailParameters,
+    attach: Boolean = true
+): Int {
     var rcAll = 0
 
     try {
@@ -78,6 +81,16 @@ suspend fun cleanup(jail: JailParameters): Int {
     }
 
     if (probeNullFs.isEmpty() && vmmDevices.isEmpty()) {
+        return rcAll
+    }
+
+    if (!attach) {
+        if (probeNullFs.isNotEmpty()) {
+            trace(TraceEvent.Warn("skip probe unmounting nullfs"))
+        }
+        if (vmmDevices.isNotEmpty()) {
+            trace(TraceEvent.Warn("skip probe destroying vmm devices"))
+        }
         return rcAll
     }
 

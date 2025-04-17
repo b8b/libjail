@@ -2,10 +2,10 @@
 
 ## building
 
-    mkdir -p freebsd14-amd64/work
-    cp jail-mntinfo-kmod/* freebsd14-amd64/work/
+    mkdir -p build-freebsd-`uname -r`-`uname -m`
     
-    ./bin/jpkg -r freebsd14-amd64 \
+    ./bin/jpkg -r build-freebsd-`uname -r`-`uname -m` \
+      --mount jail-mntinfo-kmod:/work \
       --exec-stop "cd /work && make" \
       install -y \
       FreeBSD-{runtime,utilities,rc,clang,lld,utilities,clang-dev} \
@@ -13,6 +13,6 @@
       FreeBSD-{libexecinfo-dev,libcompiler_rt-dev,elftoolchain,libbsm-dev} \
       FreeBSD-{openssl-lib-dev,tcpd-dev,mtree,fetch} FreeBSD-{src,src-sys}
     
-    install freebsd14-amd64/work/jail_mntinfo.ko /boot/modules/
+    install jail-mntinfo-kmod/jail_mntinfo.ko /boot/modules/
     kldxref /boot/modules
     kldload jail_mntinfo

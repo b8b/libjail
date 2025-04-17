@@ -15,6 +15,7 @@ if [ -z "$INTERCEPT_OCI_RUNTIME_BIN" ]; then
 fi
 
 export INTERCEPT_OCI_RUNTIME_NAME=ocijail
+export INTERCEPT_RC_JAIL="$BINDIR"/intercept-rcjail
 
 script_file="$BINDIR"/intercept-oci-runtime
 . "$script_file"

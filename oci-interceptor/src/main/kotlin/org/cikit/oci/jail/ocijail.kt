@@ -6,6 +6,7 @@ import com.github.ajalt.clikt.core.requireObject
 import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.help
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
 import kotlinx.coroutines.runBlocking
@@ -45,6 +46,10 @@ class OciJailInterceptor : GenericInterceptor(
     val root by option()
         .help("Override default location for state database").path()
         .default(Path("/var/run/ocijail"))
+
+    val interceptRcJail by option(envvar = "INTERCEPT_RC_JAIL")
+        .help("Path to intercept-rcjail command")
+        .required()
 
     val devFsRulesetVnet by option()
         .help("Use the specified devfs ruleset for vnet jails")
@@ -367,11 +372,30 @@ private class Delete : DeleteCommand() {
                 p.name == containerId || p.jid == containerId.toIntOrNull()
             }
             if (jail != null) {
+                val cleanupArgs = buildList {
+                    add(runtime.interceptRcJail)
+                    runtime.logger.logFile?.let {
+                        add("--log=$it")
+                    }
+                    runtime.logger.logFormat?.let {
+                        add("--log-format=$it")
+                    }
+                    runtime.logger.logLevel?.let {
+                        add("--log-level=$it")
+                    }
+                    add("cleanup")
+                    add("-j")
+                    add(jail.name)
+                }
+                runtime.logger.trace(TraceEvent.Exec(cleanupArgs))
+                runtime.logger.close()
                 val rc = try {
-                    cleanup(jail)
-                } catch (ex: Throwable) {
-                    runtime.logger.error(ex.toString(), ex)
-                    1
+                    ProcessBuilder(cleanupArgs)
+                        .inheritIO()
+                        .start()
+                        .waitFor()
+                } finally {
+                    runtime.logger.open()
                 }
                 if (rc != 0) {
                     throw PrintMessage(

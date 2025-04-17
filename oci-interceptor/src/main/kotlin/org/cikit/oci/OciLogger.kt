@@ -10,6 +10,7 @@ import java.time.OffsetDateTime
 import kotlin.concurrent.thread
 import kotlin.io.path.Path
 import kotlin.io.path.bufferedWriter
+import kotlin.io.path.exists
 
 class OciLogger(
     logFile: String?,
@@ -83,13 +84,19 @@ class OciLogger(
     fun open() {
         synchronized(Lock) {
             w?.close()
-            w = logFile?.let { Path(it) }?.bufferedWriter(
-                options = arrayOf(
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.WRITE,
-                    StandardOpenOption.APPEND,
+            w = logFile
+                ?.let { Path(it) }
+                ?.takeIf {
+                    // TBD activate logToConsole?
+                    it.parent?.exists() != false
+                }
+                ?.bufferedWriter(
+                    options = arrayOf(
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.WRITE,
+                        StandardOpenOption.APPEND,
+                    )
                 )
-            )
         }
     }
 

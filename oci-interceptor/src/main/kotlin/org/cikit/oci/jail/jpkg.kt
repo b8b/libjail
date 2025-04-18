@@ -226,7 +226,7 @@ class JPkgCommand : CliktCommand("jpkg") {
             "path=${realTmpDir.pathString}",
             "mount.devfs",
             *if (isJailed()) {
-                emptyArray()
+                arrayOf("devfs_ruleset=0")
             } else {
                 arrayOf("devfs_ruleset=4")
             },

@@ -52,7 +52,7 @@ fn main() {
         }
         Commands::Unmount { fsid } => {
             let dir = CString::new(fsid).expect("CString::new failed");
-            let flags = 0x0000000008000000; // MNT_BYFSID
+            let flags = 0x0000000008080000; // MNT_BYFSID|MNT_FORCE
             let result = unsafe { unmount(dir.as_ptr(), flags) };
             if result != 0 {
                 let e = Errno::last();

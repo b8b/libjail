@@ -17,7 +17,7 @@
 rust-jail-cleanup -j <JID> <COMMAND>
 
 Commands:
-mnt-info      print jail's mount info json
+mnt-info      attach to jail and print mount info json (see jail-mntinfo-kmod)
 unmount       attach to jail and call unmount(BY_FSID)
 destroy-vmm   attach to jail and destroy vmm (via sysctl)
 

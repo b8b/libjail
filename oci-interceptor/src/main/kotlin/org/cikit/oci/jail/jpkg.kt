@@ -5,11 +5,10 @@ import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.multiple
 import com.github.ajalt.clikt.parameters.groups.mutuallyExclusiveOptions
 import com.github.ajalt.clikt.parameters.groups.required
-import com.github.ajalt.clikt.parameters.options.default
-import com.github.ajalt.clikt.parameters.options.help
-import com.github.ajalt.clikt.parameters.options.multiple
-import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.path
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.cikit.libjail.*
 import org.cikit.oci.OciLogger
@@ -37,6 +36,10 @@ class JPkgCommand : CliktCommand("jpkg") {
     private val logLevel by option()
         .help("Log level")
         .default("warn")
+
+    val interceptRcJail by option(envvar = "INTERCEPT_RC_JAIL")
+        .help("Path to intercept-rcjail command")
+        .required()
 
     private val pkgBin by option(envvar = "JPKG_PKG_BIN")
         .help("path to pkg binary")
@@ -70,6 +73,14 @@ class JPkgCommand : CliktCommand("jpkg") {
 
     private val args by argument("PKG_ARG").multiple()
 
+    private val logger by lazy {
+        OciLogger(
+            logFile = log,
+            logFormat = logFormat,
+            logLevel = logLevel
+        )
+    }
+
     private val osRelDate = sysctlByNameInt32("kern.osreldate")!!
     private val arch = sysctlByNameString("hw.machine_arch")!!
 
@@ -91,14 +102,6 @@ class JPkgCommand : CliktCommand("jpkg") {
     }
 
     override fun run() {
-        currentContext.findOrSetObject {
-            OciLogger(
-                logFile = log,
-                logFormat = logFormat,
-                logLevel = logLevel
-            )
-        }
-
         if (args.isEmpty() && execStart == null && execStop == null) {
             throw PrintHelpMessage(currentContext)
         }
@@ -111,7 +114,7 @@ class JPkgCommand : CliktCommand("jpkg") {
                 }
             }
         }
-        Runtime.getRuntime().addShutdownHook(shutdownHook)
+        //Runtime.getRuntime().addShutdownHook(shutdownHook)
 
         val tmpDir = createTempDirectory("jpkg-").toRealPath()
         cleanups += {
@@ -145,17 +148,15 @@ class JPkgCommand : CliktCommand("jpkg") {
                         1,
                         printError = true
                     )
-                    run0(root, tmpDir, cleanups)
+                    runJail(root, tmpDir, cleanups)
                 }
             }
         } catch (ex: PrintMessage) {
-            throw ex
+            logger.error(ex.toString(), ex)
+            throw ProgramResult(ex.statusCode)
         } catch (ex: Throwable) {
-            throw PrintMessage(
-                ex.toString(),
-                statusCode = 1,
-                printError = true
-            )
+            logger.error(ex.toString(), ex)
+            throw ProgramResult(1)
         } finally {
             // eagerly run cleanups
             synchronized(cleanups) {
@@ -164,7 +165,7 @@ class JPkgCommand : CliktCommand("jpkg") {
                     cleanups.removeLast()
                 }
             }
-            Runtime.getRuntime().removeShutdownHook(shutdownHook)
+            //Runtime.getRuntime().removeShutdownHook(shutdownHook)
         }
     }
 
@@ -178,61 +179,21 @@ class JPkgCommand : CliktCommand("jpkg") {
             "from",
             "--name=${tmpDir.name}",
             from
-        )
-            .inheritIO()
-            .redirectOutput(ProcessBuilder.Redirect.PIPE)
-            .start()
-            .let { p ->
-                val cid = p.inputStream.use {
-                    String(it.readBytes())
-                }
-                val rc = p.waitFor()
-                require(rc == 0) {
-                    "buildah terminated with exit code $rc"
-                }
-                cid.trim()
-            }
+        ).pReadLines { lines -> lines.last() }
         cleanups += {
-            val p = buildahProcess("rm", cid)
-                .inheritIO()
-                .redirectOutput(ProcessBuilder.Redirect.PIPE)
-                .start()
-            p.inputStream.use { it.readBytes() }
-            val rc = p.waitFor()
-            require(rc == 0) {
-                "buildah terminated with exit code $rc"
-            }
+            buildahProcess("rm", cid).pReadLines {}
         }
-        val mp = buildahProcess("mount", cid)
-            .inheritIO()
-            .redirectOutput(ProcessBuilder.Redirect.PIPE)
-            .start()
-            .let { p ->
-                val mp = p.inputStream.use {
-                    String(it.readBytes())
-                }
-                val rc = p.waitFor()
-                require(rc == 0) {
-                    "buildah terminated with exit code $rc"
-                }
-                mp.trim()
-            }
-        run0(Path(mp), tmpDir, cleanups)
+        val mp = buildahProcess("mount", cid).pReadLines { lines ->
+            lines.last()
+        }
+        runJail(Path(mp), tmpDir, cleanups)
         if (commit != null) {
-            buildahProcess("commit", cid, commit)
-                .inheritIO()
-                .start()
-                .let { p ->
-                    val rc = p.waitFor()
-                    require(rc == 0) {
-                        "buildah terminated with exit code $rc"
-                    }
-                }
+            buildahProcess("commit", cid, commit).exec()
         }
     }
 
     @OptIn(ExperimentalPathApi::class)
-    private fun run0(
+    private fun runJail(
         root: Path,
         tmpDir: Path,
         cleanups: ArrayDeque<() -> Unit>
@@ -273,28 +234,37 @@ class JPkgCommand : CliktCommand("jpkg") {
             "ip4=inherit",
             "ip6=inherit",
             "persist"
-        ).inheritIO().start().waitFor().let { rc ->
-            require(rc == 0) { "jail terminated with exit code $rc" }
-        }
+        ).exec()
         cleanups += {
-            val rc = ProcessBuilder("jail", "-r", tmpDir.name)
-                .inheritIO()
-                .start()
-                .waitFor()
-            require(rc == 0) {
-                "jail terminated with exit code $rc"
+            val cleanupArgs = buildList {
+                add(interceptRcJail)
+                logger.logFile?.let {
+                    add("--log=$it")
+                }
+                logger.logFormat?.let {
+                    add("--log-format=$it")
+                }
+                logger.logLevel?.let {
+                    add("--log-level=$it")
+                }
+                add("cleanup")
+                add("-j")
+                add(tmpDir.name)
             }
+            logger.trace(TraceEvent.Exec(cleanupArgs))
+            logger.close()
+            try {
+                ProcessBuilder(cleanupArgs).exec()
+            } finally {
+                logger.open()
+            }
+            ProcessBuilder("jail", "-r", tmpDir.name).exec()
         }
         val jail = runBlocking {
             readJailParameters().singleOrNull { p ->
                 p.name == tmpDir.name
             }
         } ?: error("jail ${tmpDir.name} vanished after create")
-        cleanups += {
-            runBlocking {
-                cleanup(jail, attach = false)
-            }
-        }
 
         val tmpPkgDbDir = createMountPoint(realTmpDir, pkgDbDir)
         val tmpPkgCacheDir = createMountPoint(realTmpDir, pkgCacheDir)
@@ -342,19 +312,16 @@ class JPkgCommand : CliktCommand("jpkg") {
         execStart?.let { cmd -> runCmdInJail(jail, cmd) }
 
         if (args.isNotEmpty()) {
-            val rc = ProcessBuilder(
+            val pb = ProcessBuilder(
                 pkgBin?.pathString ?: "pkg",
                 "-j", jail.jid.toString(),
                 *args.toTypedArray()
             )
-                .inheritIO()
-                .apply {
-                    environment()["REPO_AUTOUPDATE"] = "false"
+            pb.environment()["REPO_AUTOUPDATE"] = "false"
+            pb.exec { rc ->
+                if (rc != 0) {
+                    throw ProgramResult(rc)
                 }
-                .start()
-                .waitFor()
-            if (rc != 0) {
-                throw ProgramResult(rc)
             }
         }
 
@@ -386,98 +353,72 @@ class JPkgCommand : CliktCommand("jpkg") {
         // pkg want's to read ABI from /usr/bin/uname (via elf parser)
         val rootUname = usrBinMp / "uname"
         if (!rootUname.exists()) {
-            val rc = ProcessBuilder(
+            ProcessBuilder(
                 "tar",
                 "-C", usrBinMp.pathString,
                 "-xpf", runtimePkg.pathString,
                 "-s", "|^/usr/bin/||", "/usr/bin/uname"
-            ).inheritIO().start().waitFor()
-            require(rc == 0) {
-                "tar terminated with exit code $rc"
-            }
+            ).exec()
         }
 
         val rootGroupDb = etcMp / "group"
         if (!rootGroupDb.exists()) {
-            val rc = ProcessBuilder(
+            ProcessBuilder(
                 "tar",
                 "-C", etcMp.pathString,
                 "-xpf", runtimePkg.pathString,
                 "-s", "|^/etc/||", "/etc/group"
-            ).inheritIO().start().waitFor()
-            require(rc == 0) {
-                "tar terminated with exit code $rc"
-            }
+            ).exec()
         }
 
         val rootPwdDb = etcMp / "pwd.db"
         if (!rootPwdDb.exists()) {
             if (!(etcMp / "master.passwd").exists()) {
-                val rc = ProcessBuilder(
+                ProcessBuilder(
                     "tar",
                     "-C", etcMp.pathString,
                     "-xpf", runtimePkg.pathString,
                     "-s", "|^/etc/||", "/etc/master.passwd"
-                ).inheritIO().start().waitFor()
-                require(rc == 0) {
-                    "tar terminated with exit code $rc"
-                }
+                ).exec()
             }
             ProcessBuilder(
                 "pwd_mkdb", "-i", "-p",
                 "-d", etcMp.pathString,
                 (etcMp / "master.passwd").pathString
-            ).inheritIO().start().waitFor().let { rc ->
-                require(rc == 0) { "pwd_mkdb terminated with exit code $rc" }
-            }
+            ).exec()
         }
 
         val rootServicesDb = varDbMp / "services.db"
         if (!rootServicesDb.exists()) {
             if (!(etcMp / "services").exists()) {
-                val rc = ProcessBuilder(
+                ProcessBuilder(
                     "tar",
                     "-C", etcMp.pathString,
                     "-xpf", runtimePkg.pathString,
                     "-s", "|^/etc/||", "/etc/services"
-                ).inheritIO().start().waitFor()
-                require(rc == 0) {
-                    "tar terminated with exit code $rc"
-                }
+                ).exec()
             }
             ProcessBuilder(
                 "services_mkdb", "-l", "-q",
                 "-o", rootServicesDb.pathString,
                 (etcMp / "services").pathString
-            ).inheritIO().start().waitFor().let { rc ->
-                require(rc == 0) {
-                    "services_mkdb terminated with exit code $rc"
-                }
-            }
+            ).exec()
         }
     }
 
     private fun runPkg(vararg arg: String) {
         val cacheRoot = cacheRoot()
-        val rc = ProcessBuilder(
+        val pb = ProcessBuilder(
             pkgBin?.pathString ?: "pkg",
             "-C", (cacheRoot / pkgConf).pathString,
             "-R", (cacheRoot / pkgRepoConfDir).pathString,
             *arg
         )
-            .inheritIO()
-            .apply {
-                environment()["INSTALL_AS_USER"] = "yes"
-                environment()["PKG_DBDIR"] =
-                    (cacheRoot / pkgDbDir).pathString
-                environment()["PKG_CACHEDIR"] =
-                    (cacheRoot / pkgCacheDir).pathString
-            }
-            .start()
-            .waitFor()
-        require(rc == 0) {
-            "pkg terminated with exit code $rc"
-        }
+        val env = pb.environment()
+        env["INSTALL_AS_USER"] = "yes"
+        env["PKG_DBDIR"] = (cacheRoot / pkgDbDir).pathString
+        env["PKG_CACHEDIR"] = (cacheRoot / pkgCacheDir).pathString
+        pb.exec()
     }
 
     private fun runPkgSearchVersion(
@@ -485,7 +426,7 @@ class JPkgCommand : CliktCommand("jpkg") {
         repository: String = "base"
     ): String {
         val cacheRoot = cacheRoot()
-        val p = ProcessBuilder(
+        val pb = ProcessBuilder(
             pkgBin?.pathString ?: "pkg",
             "-C", (cacheRoot / pkgConf).pathString,
             "-R", (cacheRoot / pkgRepoConfDir).pathString,
@@ -493,38 +434,16 @@ class JPkgCommand : CliktCommand("jpkg") {
             "-r", repository, "-S", "name", "-L", "pkg-name",
             "--exact", name
         )
-            .inheritIO()
-            .redirectOutput(ProcessBuilder.Redirect.PIPE)
-            .apply {
-                environment()["INSTALL_AS_USER"] = "yes"
-                environment()["PKG_DBDIR"] =
-                    (cacheRoot / pkgDbDir).pathString
-                environment()["PKG_CACHEDIR"] =
-                    (cacheRoot / pkgCacheDir).pathString
-            }
-            .start()
-        val pkgName = p.inputStream.use { String(it.readBytes()) }
-        val rc = p.waitFor()
-        require(rc == 0) {
-            "pkg terminated with exit code $rc"
-        }
+        val env = pb.environment()
+        env["INSTALL_AS_USER"] = "yes"
+        env["PKG_DBDIR"] = (cacheRoot / pkgDbDir).pathString
+        env["PKG_CACHEDIR"] = (cacheRoot / pkgCacheDir).pathString
+        val pkgName = pb.pReadLines { lines -> lines.last() }
         return pkgName.trim()
     }
 
     private fun runCmdInJail(jail: JailParameters, cmd: String) {
-        val rc = ProcessBuilder(
-            "jexec", jail.jid.toString(), "/bin/sh", "-c", cmd
-        )
-            .inheritIO()
-            .start()
-            .waitFor()
-        if (rc != 0) {
-            throw PrintMessage(
-                "command failed with exit code $rc",
-                statusCode = rc,
-                printError = true
-            )
-        }
+        ProcessBuilder("jexec", "${jail.jid}", "/bin/sh", "-c", cmd).exec()
     }
 
     private fun createMountPoint(root: Path, relative: Path): Path {
@@ -581,42 +500,32 @@ class JPkgCommand : CliktCommand("jpkg") {
         }
         val cacheRoot = cacheRoot()
         val binPath = cacheRoot / "usr/local/$v/bin/buildah"
-        if (!binPath.exists()) {
-            val libs = listOf("gpgme", "gpg-error", "assuan")
-            runPkg(
-                "fetch", "-y",
-                "buildah",
-                *libs.map { "lib$it" }.toTypedArray()
-            )
+        val pkgs = if (binPath.exists()) {
+            emptyList()
+        } else {
+            listOf("gpgme", "libgpg-error", "libassuan", "buildah")
+        }
+        if (pkgs.isNotEmpty()) {
+            runPkg("fetch", "-y", *pkgs.toTypedArray())
+        }
+        for (pkg in pkgs) {
+            val name = try {
+                runPkgSearchVersion(pkg, repository = "FreeBSD-latest")
+            } catch (ex: Exception) {
+                runPkgSearchVersion(pkg, repository = "FreeBSD-release")
+            }
+            val include = if (pkg == "buildah") {
+                "/usr/local/bin"
+            } else {
+                "/usr/local/lib"
+            }
             ProcessBuilder(
                 "tar",
                 "-C", cacheRoot.pathString,
-                "-xf", (cacheRoot / pkgCacheDir / "$v.pkg").pathString,
-                "-s", "|^/usr/local/bin/buildah|usr/local/$v/bin/buildah|",
-                "/usr/local/bin/buildah"
-            ).inheritIO().start().waitFor().let { rc ->
-                require(rc == 0) {
-                    "tar terminated with exit code $rc"
-                }
-            }
-            for (lib in libs) {
-                val name = try {
-                    runPkgSearchVersion("lib$lib", repository = "FreeBSD-latest")
-                } catch (ex: Exception) {
-                    runPkgSearchVersion("lib$lib", repository = "FreeBSD-release")
-                }
-                ProcessBuilder(
-                    "tar",
-                    "-C", cacheRoot.pathString,
-                    "-xf", (cacheRoot / pkgCacheDir / "$name.pkg").pathString,
-                    "-s", "|^/usr/local/lib|usr/local/$v/lib|",
-                    "/usr/local/lib"
-                ).inheritIO().start().waitFor().let { rc ->
-                    require(rc == 0) {
-                        "tar terminated with exit code $rc"
-                    }
-                }
-            }
+                "-xf", (cacheRoot / pkgCacheDir / "$name.pkg").pathString,
+                "-s", "|^/usr/local|usr/local/$v|",
+                include
+            ).exec()
         }
         cacheRoot / "usr/local/$v"
     }
@@ -625,5 +534,64 @@ class JPkgCommand : CliktCommand("jpkg") {
         val p = ProcessBuilder((buildahHome / "bin/buildah").pathString, *arg)
         p.environment()["LD_LIBRARY_PATH"] = (buildahHome / "lib").pathString
         return p
+    }
+
+    private fun <T> ProcessBuilder.pReadLines(
+        errorHandler: (Int, String) -> Unit = ::defaultErrorHandler,
+        block: (Sequence<String>) -> T,
+    ): T {
+        redirectOutput(ProcessBuilder.Redirect.PIPE)
+        redirectError(ProcessBuilder.Redirect.PIPE)
+        logger.trace(TraceEvent.Exec(command()))
+        return runBlocking(Dispatchers.IO) {
+            val p = start()
+            val errors = async {
+                p.errorStream.use { String(it.readBytes()) }
+            }
+            val result = p.inputStream.use { `in` ->
+                val result = block(`in`.bufferedReader().lineSequence())
+                while (true) {
+                    val len = `in`.skip(Long.MAX_VALUE)
+                    if (len <= 0) {
+                        break
+                    }
+                }
+                result
+            }
+            val rc = p.waitFor()
+            errorHandler(rc, errors.await())
+            result
+        }
+    }
+
+    private fun ProcessBuilder.exec(
+        errorHandler: (Int) -> Unit = ::defaultErrorHandler,
+    ) {
+        inheritIO()
+        logger.trace(TraceEvent.Exec(command()))
+        val rc = start().waitFor()
+        errorHandler(rc)
+    }
+}
+
+private fun ProcessBuilder.defaultErrorHandler(rc: Int) {
+    if (rc != 0) {
+        val prog = command().firstOrNull()
+        throw PrintMessage(
+            "$prog terminated with exit code $rc",
+            rc,
+            printError = true
+        )
+    }
+}
+
+private fun ProcessBuilder.defaultErrorHandler(rc: Int, errors: String) {
+    if (rc != 0) {
+        val prog = command().firstOrNull()
+        throw PrintMessage(
+            "$prog terminated with exit code $rc: $errors",
+            rc,
+            printError = true
+        )
     }
 }

@@ -114,7 +114,7 @@ class JPkgCommand : CliktCommand("jpkg") {
                 }
             }
         }
-        //Runtime.getRuntime().addShutdownHook(shutdownHook)
+        Runtime.getRuntime().addShutdownHook(shutdownHook)
 
         val tmpDir = createTempDirectory("jpkg-").toRealPath()
         cleanups += {
@@ -165,7 +165,7 @@ class JPkgCommand : CliktCommand("jpkg") {
                     cleanups.removeLast()
                 }
             }
-            //Runtime.getRuntime().removeShutdownHook(shutdownHook)
+            Runtime.getRuntime().removeShutdownHook(shutdownHook)
         }
     }
 
@@ -309,23 +309,45 @@ class JPkgCommand : CliktCommand("jpkg") {
             )
         }
 
-        execStart?.let { cmd -> runCmdInJail(jail, cmd) }
+        execStart?.let { cmd ->
+            runCmdInJail(jail, "/bin/sh", "-c", cmd)
+        }
 
-        if (args.isNotEmpty()) {
-            val pb = ProcessBuilder(
-                pkgBin?.pathString ?: "pkg",
-                "-j", jail.jid.toString(),
-                *args.toTypedArray()
-            )
-            pb.environment()["REPO_AUTOUPDATE"] = "false"
-            pb.exec { rc ->
-                if (rc != 0) {
-                    throw ProgramResult(rc)
+        var startIndex = 0
+        while (startIndex < args.size) {
+            val cmdArgs = buildList {
+                while (startIndex < args.size) {
+                    when (val arg = args[startIndex++]) {
+                        "--" -> break
+                        else -> add(arg)
+                    }
+                }
+            }
+            if (cmdArgs.first() == "sh") {
+                runCmdInJail(
+                    jail,
+                    "/bin/sh",
+                    "-c",
+                    *cmdArgs.subList(1, cmdArgs.size).toTypedArray()
+                )
+            } else {
+                val allArgs = listOf(
+                    pkgBin?.pathString ?: "pkg",
+                    "-j", jail.jid.toString()
+                ) + cmdArgs
+                val pb = ProcessBuilder(allArgs)
+                pb.environment()["REPO_AUTOUPDATE"] = "false"
+                pb.exec { rc ->
+                    if (rc != 0) {
+                        throw ProgramResult(rc)
+                    }
                 }
             }
         }
 
-        execStop?.let { cmd -> runCmdInJail(jail, cmd) }
+        execStop?.let { cmd ->
+            runCmdInJail(jail, "/bin/sh", "-c", cmd)
+        }
     }
 
     private fun prepareRoot(root: Path) {
@@ -442,8 +464,8 @@ class JPkgCommand : CliktCommand("jpkg") {
         return pkgName.trim()
     }
 
-    private fun runCmdInJail(jail: JailParameters, cmd: String) {
-        ProcessBuilder("jexec", "${jail.jid}", "/bin/sh", "-c", cmd).exec()
+    private fun runCmdInJail(jail: JailParameters, vararg cmd: String) {
+        ProcessBuilder("jexec", "${jail.jid}", *cmd).exec()
     }
 
     private fun createMountPoint(root: Path, relative: Path): Path {

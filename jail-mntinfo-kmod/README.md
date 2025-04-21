@@ -6,7 +6,7 @@
     
     ../bin/jpkg -P --path build-freebsd-`uname -r`-`uname -m` \
       --mount .:/work \
-      install -yg \
+      install -y \
       FreeBSD-src FreeBSD-src-sys \
       FreeBSD-runtime FreeBSD-utilities FreeBSD-rc FreeBSD-mtree \
       FreeBSD-fetch FreeBSD-clang FreeBSD-lld FreeBSD-elftoolchain \

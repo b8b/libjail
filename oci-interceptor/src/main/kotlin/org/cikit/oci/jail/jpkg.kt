@@ -478,13 +478,13 @@ class JPkgPipelineBuilder(
             step.commit?.let { tag ->
                 require(buildahHome != null)
                 require(cid != null)
-                buildahProcess(buildahHome, "commit", cid, tag)
+                buildahProcess(buildahHome, "commit", cid, tag).pReadLines {}
             }
         }
         commit?.let { tag ->
             require(buildahHome != null)
             require(cid != null)
-            buildahProcess(buildahHome, "commit", cid, tag)
+            buildahProcess(buildahHome, "commit", cid, tag).pReadLines {}
         }
     }
 
@@ -568,7 +568,13 @@ class JPkgPipelineBuilder(
             logger.trace(TraceEvent.Exec(cleanupArgs))
             logger.close()
             try {
-                ProcessBuilder(cleanupArgs).exec()
+                ProcessBuilder(cleanupArgs).pReadLines { lines ->
+                    for (line in lines) {
+                        logger.trace(
+                            TraceEvent.Debug("$interceptRcJail: $line")
+                        )
+                    }
+                }
             } finally {
                 logger.open()
             }

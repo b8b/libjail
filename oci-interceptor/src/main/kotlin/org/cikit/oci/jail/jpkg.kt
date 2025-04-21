@@ -582,7 +582,7 @@ class JPkgPipelineBuilder(
 
         val tmpPkgDbDir = createMountPoint(realTmpDir, pkgDbDir)
         val tmpPkgCacheDir = createMountPoint(realTmpDir, pkgCacheDir)
-        val tmpPkgConfDir = createMountPoint(realTmpDir, pkgRepoConfDir)
+        val tmpRepoConfDir = createMountPoint(realTmpDir, pkgRepoConfDir)
         val tmpEtcDir = createMountPoint(realTmpDir, Path("etc"))
         val tmpResolvConf = tmpEtcDir / "resolv.conf"
 
@@ -593,11 +593,11 @@ class JPkgPipelineBuilder(
             followLinks = false,
             overwrite = true
         )
-        nmount(
-            "nullfs",
-            tmpPkgConfDir,
-            cacheRoot / pkgRepoConfDir,
-            readOnly = true
+        nmount("tmpfs", tmpRepoConfDir)
+        (cacheRoot / pkgRepoConfDir).copyToRecursively(
+            target = tmpRepoConfDir,
+            followLinks = false,
+            overwrite = true
         )
         nmount(
             "nullfs",

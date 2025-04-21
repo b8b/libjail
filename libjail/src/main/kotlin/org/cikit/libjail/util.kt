@@ -9,6 +9,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import java.nio.file.Path
+import kotlin.io.path.pathString
 
 sealed class TraceEvent {
     class Ffi(
@@ -162,4 +165,42 @@ internal class StructIov : Structure() {
     override fun getFieldOrder(): MutableList<String> {
         return mutableListOf("iov_base", "iov_len")
     }
+}
+
+const val FLUA_BIN = "/usr/libexec/flua"
+
+private const val UCL2JSON_LUA = """local ucl = require("ucl")
+
+-- Read UCL file into a string
+local filename = arg[3]
+if not filename then
+  io.stderr:write("Usage: lua ucl2json.lua <input.ucl>\n")
+  os.exit(1)
+end
+
+local file = io.open(filename, "r")
+if not file then
+  io.stderr:write("Could not open file: " .. filename .. "\n")
+  os.exit(1)
+end
+
+local ucl_text = file:read("*a")
+file:close()
+
+-- Parse UCL string
+local obj, err = ucl.parser():parse_string(ucl_text)
+if not obj then
+  io.stderr:write("UCL parse error: " .. tostring(err) .. "\n")
+  os.exit(1)
+end
+
+-- Emit as JSON (pretty-printed)
+print(obj:emit("json"))
+"""
+
+suspend fun Path.readUcl(): JsonObject {
+    val jsonString = pRead(
+        listOf(FLUA_BIN, "-e", UCL2JSON_LUA, pathString)
+    )
+    return Json.decodeFromString(jsonString)
 }

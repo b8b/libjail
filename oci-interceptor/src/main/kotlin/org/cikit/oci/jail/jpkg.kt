@@ -34,10 +34,9 @@ private class CommandOptions : OptionGroup(
     val mount by option("--mount", metavar = "source:destination:options")
         .help(
             """Mount a directory into the jail before executing the 
-            command. After command execution, the directory is unmounted and 
-            removed. All empty parent directories are also removed.
-            When specified at the root level, the directory 
-            remains mounted for all subsequent command executions.
+            command. After command execution, the directory is unmounted
+            unless when specified at the root level, in which case the
+            directory remains mounted for all subsequent command executions.
 
             This option can be specified multiple times.
             """
@@ -475,7 +474,7 @@ class JPkgPipelineBuilder(
                 is Step.Run -> runCmdInJail(jail, step)
                 is Step.Pkg -> runPkgInJail(jail, step)
             }
-            //TODO unmount
+            unmount(realTmpDir, step.mount)
             step.commit?.let { tag ->
                 require(buildahHome != null)
                 require(cid != null)
@@ -707,7 +706,29 @@ class JPkgPipelineBuilder(
                 Path(source),
                 readOnly = "ro" in options
             )
-            //TODO add cleanup to prune empty dirs
+        }
+    }
+
+    private fun unmount(realTmpDir: Path, mount: List<String>) {
+        val mountInfo = readJailMountInfo() ?: runBlocking {
+            readMountInfo()
+        }
+        for (input in mount) {
+            val source = input.substringBefore(':')
+            val destinationAndOptions = input.substringAfter(':', source)
+            val destination = destinationAndOptions.substringBefore(':')
+            val realDestination = createMountPoint(
+                realTmpDir,
+                Path(destination.trimStart('/'))
+            )
+            val fsId = mountInfo
+                .lastOrNull { m -> m.node == realDestination.pathString }
+                ?.parseFsId()
+            if (fsId != null) {
+                unmount(fsId, force = true)
+            } else {
+                unmount(realDestination.pathString, force = true)
+            }
         }
     }
 

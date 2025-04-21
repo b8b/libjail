@@ -206,7 +206,7 @@ install_jre()
 init_pkg
 
 if [ -z "$M2_LOCAL_REPO" ]; then
-  export M2_LOCAL_REPO="$JPGG_CACHE_BASE"/lib
+  export M2_LOCAL_REPO="$JPKG_CACHE_BASE"/lib
 fi
 
 if [ -z "$java_cmd" ]; then

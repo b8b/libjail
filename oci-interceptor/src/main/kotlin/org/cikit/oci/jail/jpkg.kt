@@ -552,15 +552,7 @@ class JPkgPipelineBuilder(
         cleanups += {
             val cleanupArgs = buildList {
                 add(interceptRcJail)
-                logger.logFile?.let {
-                    add("--log=$it")
-                }
-                logger.logFormat?.let {
-                    add("--log-format=$it")
-                }
-                logger.logLevel?.let {
-                    add("--log-level=$it")
-                }
+                add("--log-level=debug")
                 add("cleanup")
                 add("-j")
                 add(realTmpDir.name)
@@ -575,6 +567,9 @@ class JPkgPipelineBuilder(
                         )
                     }
                 }
+            } catch (ex: Throwable) {
+                logger.error("jail cleanup failed", ex)
+                throw ex
             } finally {
                 logger.open()
             }

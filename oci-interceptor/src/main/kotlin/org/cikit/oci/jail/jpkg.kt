@@ -919,7 +919,11 @@ class JPkgPipelineBuilder(
                 p.errorStream.use { String(it.readBytes()) }
             }
             val result = p.inputStream.use { `in` ->
-                val result = block(`in`.bufferedReader().lineSequence())
+                val result = try {
+                    Result.success(block(`in`.bufferedReader().lineSequence()))
+                } catch (ex: Throwable) {
+                    Result.failure(ex)
+                }
                 while (true) {
                     val len = `in`.skip(Long.MAX_VALUE)
                     if (len <= 0) {
@@ -930,7 +934,7 @@ class JPkgPipelineBuilder(
             }
             val rc = p.waitFor()
             errorHandler(rc, errors.await())
-            result
+            result.getOrThrow()
         }
     }
 

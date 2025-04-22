@@ -216,7 +216,7 @@ private fun probeUnmountAttached(mounted: List<MountInfo>): Int {
             var permissionDenied = false
             mount.parseFsId()?.let { fsId ->
                 unmount(fsId, force = true) { func, errnum ->
-                    if (errnum != 1) {
+                    if (errnum != 1 /* EPERM */) {
                         error("$func(): error code $errnum")
                     }
                     permissionDenied = true

@@ -110,9 +110,6 @@ init_pkg()
   repo_config "base" \
               "pkg+http://$JPKG_SITE/\${ABI}/base_release_$v_min" \
               > "$cache_root"/usr/local/etc/pkg/repos/base.conf
-  repo_config "FreeBSD-release" \
-              "pkg+http://$JPKG_SITE/\${ABI}/release_$v_min" \
-              > "$cache_root"/usr/local/etc/pkg/repos/FreeBSD-release.conf
   repo_config "FreeBSD-latest" \
               "pkg+http://$JPKG_SITE/\${ABI}/latest" \
               > "$cache_root"/usr/local/etc/pkg/repos/FreeBSD-latest.conf

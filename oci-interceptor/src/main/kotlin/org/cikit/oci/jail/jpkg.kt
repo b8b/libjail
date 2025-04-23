@@ -116,11 +116,6 @@ class JPkgCommand : CliktCommand("jpkg") {
             System.getenv("JPKG_CACHE_BASE") ?: "/var/cache/jpkg"
         )
 
-    private val osRelDate = sysctlByNameInt32("kern.osreldate") { _, _ -> }
-    private val arch = sysctlByNameString("hw.machine_arch") { _, _ -> }
-    private val major = osRelDate?.let { it / 100_000 }
-    private val minor = osRelDate?.let { (it / 1_000) % 100 }
-
     private val src by mutuallyExclusiveOptions(
         option("--from").help(
             """Create and mount a container from the specified image using 
@@ -152,15 +147,34 @@ class JPkgCommand : CliktCommand("jpkg") {
     }
 
     override fun run() {
-        if (currentContext.invokedSubcommand == null) {
+        if (currentContext.invokedSubcommand == null && args.isEmpty()) {
             throw PrintHelpMessage(currentContext)
         }
+
+        val osRelDate = sysctlByNameInt32("kern.osreldate")!!
+        val arch = sysctlByNameString("hw.machine_arch")!!
+        val major = osRelDate / 100_000
+        val minor = (osRelDate / 1_000) % 100
+
+        val pkgCacheRoot = pkgCacheBase / "FreeBSD-$major-$arch"
+        val finalPkgBin = pkgBin ?: let {
+            val pkgStatic = pkgCacheRoot / pkgStaticPath
+            if (!pkgStatic.isExecutable()) {
+                fetchPkg(
+                    logger = logger,
+                    pkgCacheRoot = pkgCacheRoot,
+                    pkgAbiString = "FreeBSD:$major:$arch"
+                )
+            }
+            pkgStatic
+        }
+
         val pipelineBuilder = JPkgPipelineBuilder(
             separator = pipelineSeparator.takeIf { pipeline },
             logger = logger,
-            pkgBin = pkgBin,
-            pkgCacheRoot = pkgCacheBase / "FreeBSD-${major!!}-${arch!!}",
-            basePkgDir = "base_release_${minor!!}",
+            pkgBin = finalPkgBin,
+            pkgCacheRoot = pkgCacheRoot,
+            basePkgDir = "base_release_$minor",
             portPkgDir = "latest",
             interceptRcJail = interceptRcJail,
             pkgOptions = args,
@@ -169,9 +183,21 @@ class JPkgCommand : CliktCommand("jpkg") {
             from = src as? String,
             commit = commandOptions.commit
         )
+
         currentContext.findOrSetObject {
             pipelineBuilder
         }
+
+        if (currentContext.invokedSubcommand == null) {
+            pipelineBuilder.add(
+                JPkgPipelineBuilder.Step.Pkg(
+                    mount = emptyList(),
+                    commit = null,
+                    args = emptyList()
+                )
+            )
+        }
+
         currentContext.callOnClose {
             val cleanupHook = thread(start = false) {
                 pipelineBuilder.cleanup()

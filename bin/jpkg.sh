@@ -193,10 +193,6 @@ install_jre()
 
 init_pkg
 
-if [ -z "$M2_LOCAL_REPO" ]; then
-  export M2_LOCAL_REPO="$JPKG_CACHE_BASE"/lib
-fi
-
 if [ -z "$java_cmd" ]; then
   if [ "$JPKG_INSTALL_JRE" = "true" ] || ! java_cmd="$(command -v java)"; then
     install_jre

@@ -7,12 +7,12 @@ BINDIR="${RPRG%/*}"
 ROOTDIR="${BINDIR%/*}"
 
 if [ -z "$M2_LOCAL_REPO" ]; then
-  export M2_LOCAL_REPO="$ROOTDIR"/cache/lib
+  export M2_LOCAL_REPO="$ROOTDIR"/cache/java
 fi
 
 if [ -z "$java_cmd" ]; then
   if [ -x "$ROOTDIR"/jre/bin/java ]; then
-    export java_cmd="$ROOTDIR"/jre/bin/java
+    java_cmd="$ROOTDIR"/jre/bin/java
   fi
 fi
 

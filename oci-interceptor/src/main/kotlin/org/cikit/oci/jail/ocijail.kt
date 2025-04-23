@@ -105,7 +105,7 @@ class OciJailInterceptor : GenericInterceptor(
                             it.startsWith("--oci-runtime-bin=")
                 })
             {
-                finalArgs.add("--oci-runtime-bin=/usr/local/bin/ocirun")
+                finalArgs.add("--oci-runtime-bin=/usr/local/bin/ocijail")
             }
             if (System.getenv(ENV_INTERCEPT_RC_JAIL) == null &&
                 args.none {

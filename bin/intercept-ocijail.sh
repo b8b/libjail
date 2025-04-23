@@ -7,7 +7,7 @@ BINDIR="${RPRG%/*}"
 ROOTDIR="${BINDIR%/*}"
 
 if [ -z "$INTERCEPT_OCI_RUNTIME_BIN" ]; then
-  if ! runtime_bin="$(command -v ocirun)"; then
+  if ! runtime_bin="$(command -v ocijail)"; then
     export INTERCEPT_OCI_RUNTIME_BIN="/usr/local/bin/ocijail"
   else
     export INTERCEPT_OCI_RUNTIME_BIN="$runtime_bin"

@@ -45,6 +45,11 @@ class RcJailInterceptor : CliktCommand("intercept-rcjail") {
             )
         }
     }
+
+    companion object {
+        @JvmStatic
+        fun main(args: Array<String>) = RcJailInterceptor().main(args)
+    }
 }
 
 class CleanupCommand : CliktCommand("cleanup") {

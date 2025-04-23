@@ -343,4 +343,8 @@ open class GenericInterceptor(
         }
     }
 
+    companion object {
+        @JvmStatic
+        fun main(args: Array<String>) = GenericInterceptor().main(args)
+    }
 }

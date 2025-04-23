@@ -182,6 +182,33 @@ class JPkgCommand : CliktCommand("jpkg") {
             }
         }
     }
+
+    companion object {
+
+        private const val ENV_INTERCEPT_RC_JAIL = "INTERCEPT_RC_JAIL"
+
+        @JvmStatic
+        fun main(args: Array<String>) {
+            val finalArgs = mutableListOf<String>()
+            if (System.getenv(ENV_INTERCEPT_RC_JAIL) == null &&
+                args.none {
+                    it == "--intercept-rc-jail" ||
+                            it.startsWith("--intercept-rc-jail=")
+                })
+            {
+                val p = Path(System.getProperty("java.home")) /
+                        "bin" /
+                        "intercept-rcjail"
+                finalArgs.add("--intercept-rc-jail=${p.pathString}")
+            }
+            if (finalArgs.isEmpty()) {
+                JPkgCommand().main(args)
+            } else {
+                finalArgs.addAll(args)
+                JPkgCommand().main(finalArgs)
+            }
+        }
+    }
 }
 
 class NextCommand(

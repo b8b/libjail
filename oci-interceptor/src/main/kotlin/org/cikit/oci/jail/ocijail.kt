@@ -92,8 +92,41 @@ class OciJailInterceptor : GenericInterceptor(
     }
 
     companion object {
+
+        private const val ENV_OCI_RUNTIME_BIN = "INTERCEPT_OCI_RUNTIME_BIN"
+        private const val ENV_INTERCEPT_RC_JAIL = "INTERCEPT_RC_JAIL"
+
         @JvmStatic
-        fun main(args: Array<String>) = OciJailInterceptor().main(args)
+        fun main(args: Array<String>) {
+            val finalArgs = mutableListOf<String>()
+            if (System.getenv(ENV_OCI_RUNTIME_BIN) == null &&
+                args.none {
+                    it == "--oci-runtime-bin" ||
+                            it.startsWith("--oci-runtime-bin=")
+                })
+            {
+                finalArgs.add("--oci-runtime-bin=/usr/local/bin/ocirun")
+            }
+            if (System.getenv(ENV_INTERCEPT_RC_JAIL) == null &&
+                args.none {
+                    it == "--intercept-rc-jail" ||
+                            it.startsWith("--intercept-rc-jail=")
+                })
+            {
+                val p = Path(System.getProperty("java.home")) /
+                        "bin" /
+                        "intercept-rcjail"
+                if (p.isExecutable() || (p.parent / "${p.name}.exe").exists()) {
+                    finalArgs.add("--intercept-rc-jail=${p.pathString}")
+                }
+            }
+            if (finalArgs.isEmpty()) {
+                OciJailInterceptor().main(args)
+            } else {
+                finalArgs.addAll(args)
+                OciJailInterceptor().main(finalArgs)
+            }
+        }
     }
 }
 

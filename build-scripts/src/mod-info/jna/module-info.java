@@ -1,5 +1,5 @@
 module com.sun.jna {
-    //requires java.logging;
+    requires java.logging;
 
     //requires transitive java.desktop;
 

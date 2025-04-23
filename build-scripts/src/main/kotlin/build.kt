@@ -54,12 +54,19 @@ import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlin.io.path.*
+import kotlin.system.exitProcess
 
 private val baseDir = Path(".")
 private val targetDir = baseDir / "target"
 private const val version = "0.0.1"
+private val javaHome = System.getenv("JAVA_HOME")
 
 fun main() {
+    if (javaHome == null) {
+        System.err.println("set JAVA_HOME to a jdk!")
+        exitProcess(1)
+    }
+    val javaC = Path(javaHome) / "bin" / "javac"
     val libJail = compileLibJail()
     val libJailVersion = libJail.nameWithoutExtension
         .removePrefix("kotlin_script_cache-")
@@ -109,10 +116,9 @@ fun main() {
             }
         }
 
-    val javaC = baseDir / "jdk-22.0.2+9/bin/javac"
-
     val mordantNativeMod =
-        "mordant-jvm-ffm-jvm" to "com.github.ajalt.mordant.ffm"
+        "mordant-jvm-jna-jvm" to "com.github.ajalt.mordant.jna"
+        //"mordant-jvm-ffm-jvm" to "com.github.ajalt.mordant.ffm"
 
     val modsToCombine = mapOf(
         "clikt-combined" to listOf("clikt-core-jvm", "clikt-jvm")
@@ -175,29 +181,41 @@ fun main() {
             .copy(artifactId = artifactId)
     }
 
-    for ((artifactId, modId) in modsToPatch) {
-        val d = depByArtifactId.getValue(artifactId)
-        val jar = targetDir / "classes/${d.artifactId}-${d.version}.jar"
-        println(
-            "$javaC -p ${modulePath.joinToString(":")} " +
-                    "--patch-module $modId=$jar " +
-                    "build-scripts/src/mod-info/$artifactId/module-info.java"
+    val buildScript = buildString {
+        for ((artifactId, modId) in modsToPatch) {
+            val d = depByArtifactId.getValue(artifactId)
+            val jar = targetDir / "classes/${d.artifactId}-${d.version}.jar"
+            appendLine(
+                "$javaC -p ${modulePath.joinToString(":")} " +
+                        "--patch-module $modId=$jar " +
+                        "build-scripts/src/mod-info/$artifactId/module-info.java"
+            )
+            appendLine(
+                "${javaC.parent}/jar -uf $jar " +
+                        "-C build-scripts/src/mod-info/$artifactId module-info.class"
+            )
+            modulePath.add(jar)
+        }
+
+        appendLine(
+            "${javaC.parent}/jlink " +
+                    "-p ${modulePath.joinToString(":")} " +
+                    "--add-modules org.cikit.oci.interceptor,${mordantNativeMod.second} " +
+                    "--no-header-files " +
+                    "--no-man-pages " +
+                    "--launcher intercept-oci-runtime=org.cikit.oci.interceptor/org.cikit.oci.GenericInterceptor " +
+                    "--launcher intercept-ocijail=org.cikit.oci.interceptor/org.cikit.oci.jail.OciJailInterceptor " +
+                    "--launcher intercept-rcjail=org.cikit.oci.interceptor/org.cikit.oci.jail.RcJailInterceptor " +
+                    "--launcher jpkg=org.cikit.oci.interceptor/org.cikit.oci.jail.JPkgCommand " +
+                    "--output target/libjail-$version-`uname -s`-`uname -r`-`uname -m`"
         )
-        println("${javaC.parent}/jar -uf $jar " +
-                "-C build-scripts/src/mod-info/$artifactId module-info.class")
-        modulePath.add(jar)
     }
 
-    println("${javaC.parent}/jlink " +
-            "-p ${modulePath.joinToString(":")} " +
-            "--add-modules org.cikit.oci.interceptor,${mordantNativeMod.second} " +
-            "--no-header-files " +
-            "--no-man-pages " +
-            "--launcher intercept-oci-runtime=org.cikit.oci.interceptor/org.cikit.oci.GenericInterceptor " +
-            "--launcher intercept-ocijail=org.cikit.oci.interceptor/org.cikit.oci.jail.OciJailInterceptor " +
-            "--launcher intercept-rcjail=org.cikit.oci.interceptor/org.cikit.oci.jail.RcJailInterceptor " +
-            "--launcher jpkg=org.cikit.oci.interceptor/org.cikit.oci.jail.JPkgCommand " +
-            "--output target/jre")
+    ProcessBuilder("/bin/sh", "-xc", buildScript)
+        .inheritIO()
+        .start()
+        .waitFor()
+        .let { rc -> exitProcess(rc) }
 }
 
 private fun compileLibJail(): Path {

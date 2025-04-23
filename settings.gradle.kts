@@ -6,5 +6,6 @@ pluginManagement {
     }
 }
 
+include("build-scripts")
 include("libjail")
 include("oci-interceptor")

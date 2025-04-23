@@ -803,7 +803,7 @@ class JPkgPipelineBuilder(
         url: String,
         fingerPrints: String? = "/usr/share/keys/pkg"
     ): String {
-        require(name.all { ch -> ch.isLetterOrDigit() || ch == '_' }) {
+        require(name.all { ch -> ch.isLetterOrDigit() || ch in "_-" }) {
             "illegal repository name: $name"
         }
         val urlEscaped = Json.encodeToString(JsonPrimitive(url))

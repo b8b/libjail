@@ -16,6 +16,7 @@ fi
 
 export INTERCEPT_OCI_RUNTIME_NAME=ocijail
 export INTERCEPT_RC_JAIL="$BINDIR"/intercept-rcjail.sh
+export INTERCEPT_RC_JAIL_JAVA_CMD="$java_cmd"
 
 script_file="$BINDIR"/intercept-oci-runtime.sh
 . "$script_file"

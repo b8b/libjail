@@ -214,6 +214,7 @@ fi
 
 export INTERCEPT_OCI_RUNTIME_NAME=jpkg
 export INTERCEPT_RC_JAIL="$BINDIR"/intercept-rcjail.sh
+export INTERCEPT_RC_JAIL_JAVA_CMD="$java_cmd"
 
 export JPKG_PKG_BIN="$cache_root"/usr/local/sbin/pkg-static
 export JPKG_CACHE_BASE="$JPKG_CACHE_BASE"

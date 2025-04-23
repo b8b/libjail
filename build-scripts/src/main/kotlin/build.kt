@@ -79,7 +79,7 @@ fun main() {
 
     val source = buildString {
         appendLine("///DEP=org.cikit:kotlin_script_cache:$libJailVersion")
-        (baseDir / "bin" / "intercept-oci-runtime").useLines { lines ->
+        (baseDir / "bin" / "intercept-oci-runtime.sh").useLines { lines ->
             for (line in lines) {
                 if (line.startsWith("///DEP=")) {
                     appendLine(line)
@@ -209,9 +209,6 @@ fun main() {
                     "--launcher jpkg=org.cikit.oci.interceptor/org.cikit.oci.jail.JPkgCommand " +
                     "--output \${WORKDIR:-target}/libjail"
         )
-        appendLine("tar -C \${WORKDIR:-target} -cf " +
-                "libjail-$version-`uname -s`-`uname -r`-`uname -m`.tar.zst " +
-                "-a libjail")
     }
 
     ProcessBuilder("/bin/sh", "-xc", buildScript)
@@ -223,7 +220,7 @@ fun main() {
 
 private fun compileLibJail(): Path {
     val source = buildString {
-        (baseDir / "bin" / "intercept-oci-runtime").useLines { lines ->
+        (baseDir / "bin" / "intercept-oci-runtime.sh").useLines { lines ->
             for (line in lines) {
                 if (line.startsWith("///DEP=")) {
                     appendLine(line)

@@ -20,16 +20,7 @@ v_min="${v_min#0}"
 arch="$(sysctl -n hw.machine_arch)"
 
 trusted_keys=/usr/share/keys/pkg/trusted
-cache_root=
-
-case "$os_reldate" in
-*000)
-  cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"-"$arch"/r"$v_min"
-  ;;
-*)
-  cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"-"$arch"/"$os_reldate"
-  ;;
-esac
+cache_root="$JPKG_CACHE_BASE"/FreeBSD-"$v_maj"-"$arch"
 
 repo_config()
 {

@@ -13,6 +13,8 @@ import com.github.ajalt.clikt.parameters.types.path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import org.cikit.libjail.*
 import org.cikit.oci.OciLogger
 import java.nio.channels.FileChannel
@@ -95,7 +97,7 @@ class JPkgCommand : CliktCommand("jpkg") {
         .help("Log level")
         .default("warn")
 
-    val interceptRcJail by option(
+    private val interceptRcJail by option(
         envvar = "INTERCEPT_RC_JAIL",
         hidden = System.getenv("INTERCEPT_RC_JAIL") != null
     )
@@ -113,6 +115,11 @@ class JPkgCommand : CliktCommand("jpkg") {
             Path("/var/cache/jpkg"),
             System.getenv("JPKG_CACHE_BASE") ?: "/var/cache/jpkg"
         )
+
+    private val osRelDate = sysctlByNameInt32("kern.osreldate") { _, _ -> }
+    private val arch = sysctlByNameString("hw.machine_arch") { _, _ -> }
+    private val major = osRelDate?.let { it / 100_000 }
+    private val minor = osRelDate?.let { (it / 1_000) % 100 }
 
     private val src by mutuallyExclusiveOptions(
         option("--from").help(
@@ -152,7 +159,9 @@ class JPkgCommand : CliktCommand("jpkg") {
             separator = pipelineSeparator.takeIf { pipeline },
             logger = logger,
             pkgBin = pkgBin,
-            pkgCacheBase = pkgCacheBase,
+            pkgCacheRoot = pkgCacheBase / "FreeBSD-${major!!}-${arch!!}",
+            basePkgDir = "base_release_${minor!!}",
+            portPkgDir = "latest",
             interceptRcJail = interceptRcJail,
             pkgOptions = args,
             mount = commandOptions.mount,
@@ -411,7 +420,9 @@ class JPkgPipelineBuilder(
     val separator: String?,
     private val logger: OciLogger,
     private val pkgBin: Path?,
-    private val pkgCacheBase: Path,
+    private val pkgCacheRoot: Path,
+    private val basePkgDir: String,
+    private val portPkgDir: String,
     private val interceptRcJail: String,
     private val pkgOptions: List<String>,
     private val mount: List<String>,
@@ -419,6 +430,10 @@ class JPkgPipelineBuilder(
     private val from: String?,
     private val commit: String?
 ) {
+    init {
+        initPkg()
+    }
+
     private val steps = mutableListOf<Step>()
     private val cleanups: ArrayDeque<() -> Unit> = ArrayDeque()
 
@@ -524,27 +539,12 @@ class JPkgPipelineBuilder(
         }
     }
 
-    private fun cacheRoot(): Path {
-        val osRelDate = sysctlByNameInt32("kern.osreldate")!!
-        val arch = sysctlByNameString("hw.machine_arch")!!
-        val base = pkgCacheBase
-        val major = osRelDate / 100_000
-        val minor = osRelDate / 1_000 - major * 100
-        val snapshot = osRelDate % 1_000
-        return if (snapshot == 0) {
-            base / "FreeBSD-$major-$arch" / "r$minor"
-        } else {
-            base / "FreeBSD-$major-$arch" / "%07d".format(osRelDate)
-        }
-    }
-
     @OptIn(ExperimentalPathApi::class)
     private fun prepareJail(
         realTmpDir: Path,
         rootPath: Path,
         cleanups: ArrayDeque<() -> Unit>
     ): JailParameters {
-        val cacheRoot = cacheRoot()
         nmount("nullfs", realTmpDir, rootPath)
         cleanups += {
             val mountInfo = readJailMountInfo() ?: runBlocking {
@@ -614,15 +614,15 @@ class JPkgPipelineBuilder(
         val tmpEtcDir = createMountPoint(realTmpDir, Path("etc"))
         val tmpResolvConf = tmpEtcDir / "resolv.conf"
 
-        nmount("nullfs", tmpPkgCacheDir, cacheRoot / pkgCacheDir)
+        nmount("nullfs", tmpPkgCacheDir, pkgCacheRoot / pkgCacheDir)
         nmount("tmpfs", tmpPkgDbDir / "repos")
-        (cacheRoot / pkgDbDir / "repos").copyToRecursively(
+        (pkgCacheRoot / pkgDbDir / "repos").copyToRecursively(
             target = tmpPkgDbDir / "repos",
             followLinks = false,
             overwrite = true
         )
         nmount("tmpfs", tmpRepoConfDir)
-        (cacheRoot / pkgRepoConfDir).copyToRecursively(
+        (pkgCacheRoot / pkgRepoConfDir).copyToRecursively(
             target = tmpRepoConfDir,
             followLinks = false,
             overwrite = true
@@ -638,8 +638,6 @@ class JPkgPipelineBuilder(
     }
 
     private fun prepareRoot(root: Path) {
-        val cacheRoot = cacheRoot()
-
         createMountPoint(root, Path("dev"))
         val etcMp = createMountPoint(root, Path("etc"))
         val usrBinMp = createMountPoint(root, Path("usr/bin"))
@@ -656,7 +654,7 @@ class JPkgPipelineBuilder(
         val runtimePkg by lazy {
             runPkg(listOf("fetch", "--quiet", "-y", "FreeBSD-runtime"))
             val pkgName = runPkgSearchVersion("FreeBSD-runtime")
-            cacheRoot / pkgCacheDir / "$pkgName.pkg"
+            pkgCacheRoot / pkgCacheDir / "$pkgName.pkg"
         }
 
         // pkg want's to read ABI from /usr/bin/uname (via elf parser)
@@ -800,22 +798,71 @@ class JPkgPipelineBuilder(
         ).exec()
     }
 
+    private fun repoConfig(
+        name: String,
+        url: String,
+        fingerPrints: String? = "/usr/share/keys/pkg"
+    ): String {
+        require(name.all { ch -> ch.isLetterOrDigit() || ch == '_' }) {
+            "illegal repository name: $name"
+        }
+        val urlEscaped = Json.encodeToString(JsonPrimitive(url))
+        return buildString {
+            appendLine("$name: {")
+            appendLine("    url: $urlEscaped,")
+            appendLine("    mirror_type: \"srv\",")
+            if (fingerPrints != null) {
+                val fingerPrintsEscaped = Json.encodeToString(JsonPrimitive(fingerPrints))
+                appendLine("    signature_type: \"fingerprints\",")
+                appendLine("    fingerprints: $fingerPrintsEscaped,")
+            }
+            appendLine("    enabled: yes")
+            appendLine("}")
+        }
+    }
+
+    private fun initPkg() {
+        (pkgCacheRoot / pkgRepoConfDir).let { p ->
+            if (!p.exists()) {
+                p.createDirectories()
+            }
+        }
+        (pkgCacheRoot / pkgConf).parent?.let { p ->
+            if (!p.exists()) {
+                p.createDirectories()
+            }
+        }
+        val pkgSite = System.getenv("JPKG_SITE") ?: "pkg.FreeBSD.org"
+        (pkgCacheRoot / pkgRepoConfDir / "base.conf").writeText(
+            repoConfig(
+                "base",
+                "pkg+http://$pkgSite/\${ABI}/$basePkgDir"
+            )
+        )
+        (pkgCacheRoot / pkgRepoConfDir / "FreeBSD-latest.conf").writeText(
+            repoConfig(
+                "FreeBSD-latest",
+                "pkg+http://$pkgSite/\${ABI}/$portPkgDir"
+            )
+        )
+        (pkgCacheRoot / pkgConf).writeText("")
+    }
+
     private fun runPkg(args: List<String>) {
-        val cacheRoot = cacheRoot()
         val pb = ProcessBuilder(
             buildList {
                 add(pkgBin?.pathString ?: "pkg")
                 add("-C")
-                add((cacheRoot / pkgConf).pathString)
+                add((pkgCacheRoot / pkgConf).pathString)
                 add("-R")
-                add((cacheRoot / pkgRepoConfDir).pathString)
+                add((pkgCacheRoot / pkgRepoConfDir).pathString)
                 addAll(args)
             }
         )
         val env = pb.environment()
         env["INSTALL_AS_USER"] = "yes"
-        env["PKG_DBDIR"] = (cacheRoot / pkgDbDir).pathString
-        env["PKG_CACHEDIR"] = (cacheRoot / pkgCacheDir).pathString
+        env["PKG_DBDIR"] = (pkgCacheRoot / pkgDbDir).pathString
+        env["PKG_CACHEDIR"] = (pkgCacheRoot / pkgCacheDir).pathString
         pb.exec()
     }
 
@@ -823,19 +870,18 @@ class JPkgPipelineBuilder(
         name: String,
         repository: String = "base"
     ): String {
-        val cacheRoot = cacheRoot()
         val pb = ProcessBuilder(
             pkgBin?.pathString ?: "pkg",
-            "-C", (cacheRoot / pkgConf).pathString,
-            "-R", (cacheRoot / pkgRepoConfDir).pathString,
+            "-C", (pkgCacheRoot / pkgConf).pathString,
+            "-R", (pkgCacheRoot / pkgRepoConfDir).pathString,
             "search", "--quiet", "--no-repo-update",
             "-r", repository, "-S", "name", "-L", "pkg-name",
             "--exact", name
         )
         val env = pb.environment()
         env["INSTALL_AS_USER"] = "yes"
-        env["PKG_DBDIR"] = (cacheRoot / pkgDbDir).pathString
-        env["PKG_CACHEDIR"] = (cacheRoot / pkgCacheDir).pathString
+        env["PKG_DBDIR"] = (pkgCacheRoot / pkgDbDir).pathString
+        env["PKG_CACHEDIR"] = (pkgCacheRoot / pkgCacheDir).pathString
         val pkgName = pb.pReadLines { lines -> lines.last() }
         return pkgName.trim()
     }
@@ -892,8 +938,7 @@ class JPkgPipelineBuilder(
         } catch (ex: Exception) {
             runPkgSearchVersion("buildah", repository = "FreeBSD-release")
         }
-        val cacheRoot = cacheRoot()
-        val binPath = cacheRoot / "usr/local/$v/bin/buildah"
+        val binPath = pkgCacheRoot / "usr/local/$v/bin/buildah"
         val pkgs = if (binPath.exists()) {
             emptyList()
         } else {
@@ -915,13 +960,13 @@ class JPkgPipelineBuilder(
             }
             ProcessBuilder(
                 "tar",
-                "-C", cacheRoot.pathString,
-                "-xf", (cacheRoot / pkgCacheDir / "$name.pkg").pathString,
+                "-C", pkgCacheRoot.pathString,
+                "-xf", (pkgCacheRoot / pkgCacheDir / "$name.pkg").pathString,
                 "-s", "|^/usr/local|usr/local/$v|",
                 include
             ).exec()
         }
-        return cacheRoot / "usr/local/$v"
+        return pkgCacheRoot / "usr/local/$v"
     }
 
     private fun buildahProcess(

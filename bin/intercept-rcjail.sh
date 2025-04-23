@@ -8,6 +8,6 @@ ROOTDIR="${BINDIR%/*}"
 
 export INTERCEPT_OCI_RUNTIME_NAME=rcjail
 
-script_file="$BINDIR"/intercept-oci-runtime
+script_file="$BINDIR"/intercept-oci-runtime.sh
 . "$script_file"
 exit 2

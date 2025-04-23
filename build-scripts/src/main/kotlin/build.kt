@@ -58,7 +58,7 @@ import kotlin.system.exitProcess
 
 private val baseDir = Path(".")
 private val targetDir = baseDir / "target"
-private const val version = "0.0.1"
+private val version = System.getenv("LIBJAIL_VERSION") ?: "0.0.1"
 private val javaHome = System.getenv("JAVA_HOME")
 
 fun main() {
@@ -207,8 +207,11 @@ fun main() {
                     "--launcher intercept-ocijail=org.cikit.oci.interceptor/org.cikit.oci.jail.OciJailInterceptor " +
                     "--launcher intercept-rcjail=org.cikit.oci.interceptor/org.cikit.oci.jail.RcJailInterceptor " +
                     "--launcher jpkg=org.cikit.oci.interceptor/org.cikit.oci.jail.JPkgCommand " +
-                    "--output target/libjail-$version-`uname -s`-`uname -r`-`uname -m`"
+                    "--output \${WORKDIR:-target}/libjail"
         )
+        appendLine("tar -C \${WORKDIR:-target} -cf " +
+                "libjail-$version-`uname -s`-`uname -r`-`uname -m`.tar.zst " +
+                "-a libjail")
     }
 
     ProcessBuilder("/bin/sh", "-xc", buildScript)

@@ -213,11 +213,11 @@ if [ -z "$java_cmd" ]; then
 fi
 
 export INTERCEPT_OCI_RUNTIME_NAME=jpkg
-export INTERCEPT_RC_JAIL="$BINDIR"/intercept-rcjail
+export INTERCEPT_RC_JAIL="$BINDIR"/intercept-rcjail.sh
 
 export JPKG_PKG_BIN="$cache_root"/usr/local/sbin/pkg-static
 export JPKG_CACHE_BASE="$JPKG_CACHE_BASE"
 
-script_file="$BINDIR"/intercept-oci-runtime
+script_file="$BINDIR"/intercept-oci-runtime.sh
 . "$script_file"
 exit 2

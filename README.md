@@ -1,3 +1,3 @@
 # libjail
 
-JVM library to work with FreeBSD jails
+JVM library and tools to work with FreeBSD jails

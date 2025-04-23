@@ -81,7 +81,9 @@ fun main() {
         appendLine("///DEP=org.cikit:kotlin_script_cache:$libJailVersion")
         (baseDir / "bin" / "intercept-oci-runtime.sh").useLines { lines ->
             for (line in lines) {
-                if (line.startsWith("///DEP=")) {
+                if (line.startsWith("///DEP=") ||
+                    line.startsWith("///PLUGIN="))
+                {
                     appendLine(line)
                 } else if (line.startsWith("///INC=../oci-interceptor/")) {
                     appendLine(line.replace("///INC=../", "///INC="))
@@ -222,7 +224,9 @@ private fun compileLibJail(): Path {
     val source = buildString {
         (baseDir / "bin" / "intercept-oci-runtime.sh").useLines { lines ->
             for (line in lines) {
-                if (line.startsWith("///DEP=")) {
+                if (line.startsWith("///DEP=") ||
+                    line.startsWith("///PLUGIN="))
+                {
                     appendLine(line)
                 } else if (line.startsWith("///INC=../libjail/")) {
                     appendLine(line.replace("///INC=../", "///INC="))

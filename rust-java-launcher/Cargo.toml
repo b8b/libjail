@@ -1,0 +1,5 @@
+[package]
+name = "rust-java-launcher"
+
+[dependencies]
+exec = "0.3"

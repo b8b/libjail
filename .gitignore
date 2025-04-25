@@ -1,0 +1,10 @@
+**/build
+**/.gradle
+**/*.iml
+**/.idea
+
+/work
+/lib
+/target
+/cache
+/*.tar.zst

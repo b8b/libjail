@@ -8,4 +8,5 @@ pluginManagement {
 
 include("build-scripts")
 include("libjail")
+include("libjail-ffm")
 include("oci-interceptor")

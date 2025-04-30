@@ -96,6 +96,7 @@ fi
 ///INC=../libjail/src/main/kotlin/org/cikit/libjail/mount.kt
 ///INC=../libjail/src/main/kotlin/org/cikit/libjail/sysctl.kt
 ///INC=../libjail/src/main/kotlin/org/cikit/libjail/util.kt
+///INC=../libjail/src/main/kotlin/org/cikit/libjail/util_jna.kt
 ///INC=../libjail/src/main/kotlin/org/cikit/libjail/vmm.kt
 ///INC=../libjail/src/main/kotlin/org/cikit/libjail/vnet.kt
 

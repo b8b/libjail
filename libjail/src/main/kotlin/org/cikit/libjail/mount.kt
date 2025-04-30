@@ -1,7 +1,5 @@
 package org.cikit.libjail
 
-import com.sun.jna.Memory
-import com.sun.jna.Native
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.nio.file.Path
@@ -75,37 +73,6 @@ fun readJailMountInfo(): List<MountInfo>? {
     return json.decodeFromString<SysctlMountInfo>(data).mounted
 }
 
-private fun Map<String, String>.toIov(): Array<StructIov?> {
-    val iov = StructIov().toArray(size * 2)
-    var i = 0
-    for ((k, v) in entries) {
-        k.let { s ->
-            val data = s.encodeToByteArray()
-            val dataLen = data.size + 1L
-            (iov[i] as StructIov).iov_len = dataLen
-            (iov[i++] as StructIov).iov_base = Memory(dataLen).apply {
-                write(0, data, 0, data.size)
-                setByte(dataLen - 1L, 0.toByte())
-            }
-        }
-        v.let { s ->
-            val data = s.encodeToByteArray()
-            val dataLen = data.size + 1L
-            (iov[i] as StructIov).iov_len = dataLen
-            (iov[i++] as StructIov).iov_base = Memory(dataLen).apply {
-                write(0, data, 0, data.size)
-                setByte(dataLen - 1L, 0.toByte())
-            }
-        }
-    }
-    @Suppress("UNCHECKED_CAST")
-    return iov as Array<StructIov?>
-}
-
-private val defaultErrorHandler = { func: String, errnum: Int ->
-    error("$func(): error code $errnum")
-}
-
 fun nmount(
     fsType: String,
     fsPath: Path,
@@ -124,7 +91,6 @@ fun nmount(
         putAll(args)
     }
     trace(TraceEvent.Ffi("nmount", allArgs.entries.map { (k, v) -> "$k=$v" }))
-    val iov = allArgs.toIov()
     var flags = 0L
     if (readOnly) {
         flags = flags or MNT_RDONLY
@@ -132,10 +98,7 @@ fun nmount(
     if (ignore) {
         flags = flags or MNT_IGNORE
     }
-    val rc = FREEBSD_LIBC.nmount(iov, iov.size, flags.toInt())
-    if (rc != 0) {
-        errorHandler("nmount", Native.getLastError())
-    }
+    Ffi.nmount(allArgs, (flags and 0xFFFFFFFF).toInt(), errorHandler)
 }
 
 fun unmount(
@@ -149,10 +112,7 @@ fun unmount(
     }
     val decimalFsId = fsId.encodeToDecimalFsId()
     trace(TraceEvent.Ffi("unmount", decimalFsId, flags.toString()))
-    val rc = FREEBSD_LIBC.unmount(decimalFsId, (flags and 0xFFFFFFFF).toInt())
-    if (rc != 0) {
-        errorHandler("unmount", Native.getLastError())
-    }
+    Ffi.unmount(decimalFsId, (flags and 0xFFFFFFFF).toInt(), errorHandler)
 }
 
 fun unmount(
@@ -165,10 +125,7 @@ fun unmount(
         flags = flags or MNT_FORCE
     }
     trace(TraceEvent.Ffi("unmount", dir, flags.toString()))
-    val rc = FREEBSD_LIBC.unmount(dir, (flags and 0xFFFFFFFF).toInt())
-    if (rc != 0) {
-        errorHandler("unmount", Native.getLastError())
-    }
+    Ffi.unmount(dir, (flags and 0xFFFFFFFF).toInt(), errorHandler)
 }
 
 private const val MNT_RDONLY   = 0x0000000000000001L

@@ -1,6 +1,5 @@
 package org.cikit.libjail
 
-import com.sun.jna.Native
 import kotlinx.serialization.json.*
 
 class JailParameters(
@@ -36,16 +35,10 @@ suspend fun modifyJailParameters(
 
 fun jailAttach(jail: JailParameters) {
     trace(TraceEvent.Ffi("jail_attach", "${jail.jid} /* ${jail.name} */"))
-    val rc = FREEBSD_LIBC.jail_attach(jail.jid)
-    if (rc != 0) {
-        error("jail_attach(): error code ${Native.getLastError()}")
-    }
+    Ffi.jailAttach(jail.jid)
 }
 
 fun jailRemove(jail: JailParameters) {
     trace(TraceEvent.Ffi("jail_remove", "${jail.jid} /* ${jail.name} */"))
-    val rc = FREEBSD_LIBC.jail_remove(jail.jid)
-    if (rc != 0) {
-        error("jail_remove(): error code ${Native.getLastError()}")
-    }
+    Ffi.jailRemove(jail.jid)
 }

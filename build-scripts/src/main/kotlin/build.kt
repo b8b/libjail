@@ -39,13 +39,14 @@ fi
 ///DEP=com.github.ajalt.mordant:mordant-core-jvm:3.0.2
 ///DEP=com.github.ajalt.colormath:colormath-jvm:3.6.0
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-jna-jvm:3.0.2
-///RDEP=net.java.dev.jna:jna:5.15.0
+///DEP=net.java.dev.jna:jna:5.15.0
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-ffm-jvm:3.0.2
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-graal-ffi-jvm:3.0.2
 
 ///DEP=com.github.ajalt.clikt:clikt-jvm:5.0.3
 ///DEP=com.github.ajalt.clikt:clikt-core-jvm:5.0.3
 
+import com.sun.jna.Native
 import kotlin_script.Dependency
 import kotlin_script.KotlinScript
 import kotlin_script.Script
@@ -59,14 +60,20 @@ import kotlin.system.exitProcess
 private val baseDir = Path(".")
 private val targetDir = baseDir / "target"
 private val version = System.getenv("LIBJAIL_VERSION") ?: "0.0.1"
-private val javaHome = System.getenv("JAVA_HOME")
 
 fun main() {
-    if (javaHome == null) {
-        System.err.println("set JAVA_HOME to a jdk!")
-        exitProcess(1)
+    require(Native.SIZE_T_SIZE == 8) {
+        "Ffm bindings are hard coded to sizeof(size_t) == 8 currently!"
     }
-    val javaC = Path(javaHome) / "bin" / "javac"
+    val javaVersion = System.getProperty("java.vm.specification.version")
+    require(javaVersion.toInt() >= 24) {
+        "Build requires a jdk >= 24. Detected '$javaVersion'."
+    }
+    val javaC = Path(System.getProperty("java.home")) / "bin" / "javac"
+    require(javaC.isExecutable()) {
+        "Build requires a jdk >= 24. $javaC is not executable."
+    }
+
     val libJail = compileLibJail()
     val libJailVersion = libJail.nameWithoutExtension
         .removePrefix("kotlin_script_cache-")
@@ -119,8 +126,7 @@ fun main() {
         }
 
     val mordantNativeMod =
-        "mordant-jvm-jna-jvm" to "com.github.ajalt.mordant.jna"
-        //"mordant-jvm-ffm-jvm" to "com.github.ajalt.mordant.ffm"
+        "mordant-jvm-ffm-jvm" to "com.github.ajalt.mordant.ffm"
 
     val modsToCombine = mapOf(
         "clikt-combined" to listOf("clikt-core-jvm", "clikt-jvm")
@@ -171,17 +177,14 @@ fun main() {
     }
 
     for ((artifactId, artifacts) in modsToCombine) {
-        val v = artifacts
-            .map { depByArtifactId.getValue(it).version }
-            .toSet()
-            .single()
+        val v = depByArtifactId.getValue(artifacts.last()).version
         val tgt = targetDir / "classes/$artifactId-$v.jar"
         val sources = artifacts
             .map { depByArtifactId.getValue(it) }
             .map { targetDir / "classes/${it.artifactId}-${it.version}.jar" }
         combineJars(tgt, *sources.toTypedArray())
         depByArtifactId[artifactId] = depByArtifactId
-            .getValue(artifacts.first())
+            .getValue(artifacts.last())
             .copy(artifactId = artifactId)
     }
 
@@ -189,25 +192,36 @@ fun main() {
         for ((artifactId, modId) in modsToPatch) {
             val d = depByArtifactId.getValue(artifactId)
             val jar = targetDir / "classes/${d.artifactId}-${d.version}.jar"
+            val destination = targetDir / "classes/${d.artifactId}-${d.version}"
+            if (destination.exists()) {
+                destination.createDirectories()
+            }
             appendLine(
-                "$javaC -p ${modulePath.joinToString(":")} " +
-                        "--patch-module $modId=$jar " +
-                        "build-scripts/src/mod-info/$artifactId/module-info.java"
+                buildString {
+                    append("$javaC -p ${modulePath.joinToString(":")} ")
+                    append("--patch-module $modId=$jar ")
+                    append("-d ${destination.pathString} ")
+                    append("build-scripts/src/mod-info/$artifactId/module-info.java")
+                }
             )
             appendLine(
-                "${javaC.parent}/jar -uf $jar " +
-                        "-C build-scripts/src/mod-info/$artifactId module-info.class"
+                buildString {
+                    append("${javaC.parent}/jar -uf $jar ")
+                    append("-C ${destination.pathString} module-info.class")
+                }
             )
             modulePath.add(jar)
         }
 
         appendLine(
-            "${javaC.parent}/jlink " +
-                    "-p ${modulePath.joinToString(":")} " +
-                    "--add-modules org.cikit.oci.interceptor,${mordantNativeMod.second} " +
-                    "--no-header-files " +
-                    "--no-man-pages " +
-                    "--output \${WORKDIR:-target}/libjail"
+            buildString {
+                append("${javaC.parent}/jlink ")
+                append("-p ${modulePath.joinToString(":")} ")
+                append("--add-modules org.cikit.oci.interceptor,${mordantNativeMod.second} ")
+                append("--no-header-files ")
+                append("--no-man-pages ")
+                append("--output \${WORKDIR:-target}/libjail")
+            }
         )
     }
 
@@ -227,7 +241,14 @@ private fun compileLibJail(): Path {
                 {
                     appendLine(line)
                 } else if (line.startsWith("///INC=../libjail/")) {
-                    appendLine(line.replace("///INC=../", "///INC="))
+                    if (line.contains("util_jna.kt")) {
+                        appendLine(
+                            line.replace("../libjail/", "libjail-ffm/")
+                                .replace("util_jna", "util_ffm")
+                        )
+                    } else {
+                        appendLine(line.replace("///INC=../", "///INC="))
+                    }
                 }
             }
         }

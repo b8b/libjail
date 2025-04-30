@@ -26,11 +26,20 @@ fn main() {
         .expect("Failed to get parent directory")
         .to_path_buf();
 
+    let java_home = dir.parent()
+        .expect("Failed to get parent directory");
+    let aot_cache = java_home.join("app.aot");
+
     // Build the path to the java binary in the same directory
     let java_path = dir.join("java");
 
     // Prepare the command arguments
     let mut args: Vec<String> = Vec::new();
+    if aot_cache.exists() {
+      args.push(format!("-XX:AOTCache={}", aot_cache.to_string_lossy()));
+    }
+    args.push("--enable-native-access=com.github.ajalt.mordant.ffm".to_string());
+    args.push("--enable-native-access=org.cikit.libjail".to_string());
     args.push("-m".to_string());
     args.push(format!("org.cikit.oci.interceptor/{}", main_class));
     args.extend(env::args().skip(1)); // add all user-passed args

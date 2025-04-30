@@ -1,10 +1,5 @@
 package org.cikit.libjail
 
-import com.sun.jna.IntegerType
-import com.sun.jna.Native
-import com.sun.jna.Pointer
-import com.sun.jna.Structure
-import com.sun.jna.ptr.ByReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
@@ -12,6 +7,51 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.nio.file.Path
 import kotlin.io.path.pathString
+
+internal val defaultErrorHandler = { func: String, errnum: Int ->
+    error("$func(): error code $errnum")
+}
+
+interface FfiFunctions {
+
+    fun nmount(
+        iov: Map<String, String>,
+        flags: Int,
+        errorHandler: (String, Int) -> Unit = defaultErrorHandler
+    )
+
+    fun unmount(
+        dir: String,
+        flags: Int,
+        errorHandler: (String, Int) -> Unit = defaultErrorHandler
+    )
+
+    fun jailAttach(
+        jid: Int,
+        errorHandler: (String, Int) -> Unit = defaultErrorHandler
+    )
+
+    fun jailRemove(
+        jid: Int,
+        errorHandler: (String, Int) -> Unit = defaultErrorHandler
+    )
+
+    fun sysctlByNameString(
+        name: String,
+        errorHandler: (String, Int) -> Unit = defaultErrorHandler
+    ): String?
+
+    fun sysctlByNameString(
+        name: String,
+        value: String,
+        errorHandler: (String, Int) -> Unit = defaultErrorHandler
+    )
+
+    fun sysctlByNameInt32(
+        name: String,
+        errorHandler: (String, Int) -> Unit = defaultErrorHandler
+    ): Int?
+}
 
 sealed class TraceEvent {
     class Ffi(
@@ -93,77 +133,6 @@ internal suspend fun pRead(
         val rc = p.waitFor()
         block(args, rc, errors.await())
         output
-    }
-}
-
-internal class SizeT(
-    value: Long = 0
-) : IntegerType(Native.SIZE_T_SIZE, value, true) {
-    override fun toByte(): Byte {
-        return this.toByte()
-    }
-    override fun toShort(): Short {
-        return this.toShort()
-    }
-}
-
-internal class SizeTByReference(
-    value: SizeT = SizeT()
-) : ByReference(Native.SIZE_T_SIZE) {
-
-   init {
-        setValue(value)
-    }
-
-    fun getValue(): SizeT {
-        val p = pointer
-        return if (Native.SIZE_T_SIZE == 8) {
-            SizeT(p.getLong(0))
-        } else {
-            SizeT(p.getInt(0).toLong())
-        }
-    }
-
-    fun setValue(value: SizeT) {
-        val p = pointer
-        if (Native.SIZE_T_SIZE == 8) {
-            p.setLong(0, value.toLong())
-        } else {
-            p.setInt(0, value.toInt())
-        }
-    }
-
-}
-
-internal interface FreeBSDLibC : com.sun.jna.Library {
-    fun nmount(iov: Array<StructIov?>?, niov: Int, flags: Int): Int
-    fun unmount(dir: String, flags: Int): Int
-
-    fun jail_attach(jid: Int): Int
-    fun jail_remove(jid: Int): Int
-
-    fun sysctlbyname(
-        name: String?,               // sysctl name (e.g., "hw.model")
-        oldp: Pointer?,              // buffer to store result
-        oldlenp: SizeTByReference?,  // buffer size (input/output)
-        newp: Pointer?,              // new value (setter) or null
-        newlen: SizeT?               // new value length (or 0)
-    ): Int
-}
-
-internal val FREEBSD_LIBC by lazy {
-    Native.load("c", FreeBSDLibC::class.java)
-}
-
-internal class StructIov : Structure() {
-    @JvmField
-    var iov_base: Pointer? = null
-
-    @JvmField
-    var iov_len: Long? = 0
-
-    override fun getFieldOrder(): MutableList<String> {
-        return mutableListOf("iov_base", "iov_len")
     }
 }
 

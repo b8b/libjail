@@ -19,11 +19,11 @@ fi
       FreeBSD-clang-dev FreeBSD-clibs-dev FreeBSD-runtime-dev \
       FreeBSD-utilities-dev FreeBSD-libexecinfo-dev \
       FreeBSD-libcompiler_rt-dev FreeBSD-libbsm-dev FreeBSD-openssl-lib-dev \
-      FreeBSD-tcpd-dev openjdk17 rust \
+      FreeBSD-tcpd-dev openjdk24 rust \
   --then run /usr/bin/env \
       LIBJAIL_VERSION="$LIBJAIL_VERSION" \
       sh -c 'set -e
-      export JAVA_HOME=/usr/local/openjdk17
+      export JAVA_HOME=/usr/local/openjdk24
       cd /src/rust-jail-cleanup && cargo build --release --locked
       cd /src/rust-java-launcher && cargo build --release --locked
       cd /src/jail-mntinfo-kmod && make
@@ -31,9 +31,21 @@ fi
       freebsd_version="`freebsd-version`"
       freebsd_version="`uname -s`${freebsd_version%%[!0-9]*}-`uname -m`"
       echo "$LIBJAIL_VERSION"-"$freebsd_version" > target/libjail/VERSION
+      target/libjail/bin/java \
+        -XX:AOTMode=record -XX:AOTConfiguration=target/libjail/app.aotconf \
+        --enable-native-access=com.github.ajalt.mordant.ffm \
+        --enable-native-access=org.cikit.libjail \
+        -m org.cikit.oci.interceptor/org.cikit.oci.jail.JPkgCommand -h
+      target/libjail/bin/java \
+        -XX:AOTMode=create -XX:AOTConfiguration=target/libjail/app.aotconf \
+        -XX:AOTCache=target/libjail/app.aot \
+        --enable-native-access=com.github.ajalt.mordant.ffm \
+        --enable-native-access=org.cikit.libjail \
+        -m org.cikit.oci.interceptor/org.cikit.oci.jail.JPkgCommand -h
       '
 
 read -r VERSION < target/libjail/VERSION
+cp LICENSE target/libjail/
 
 cp rust-java-launcher/target/release/rust-java-launcher target/libjail/bin/jpkg
 ln -f target/libjail/bin/jpkg target/libjail/bin/intercept-oci-runtime

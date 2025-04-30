@@ -10,20 +10,13 @@ import com.github.ajalt.clikt.parameters.options.required
 import com.github.ajalt.clikt.parameters.types.long
 import com.github.ajalt.clikt.parameters.types.path
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.*
 import org.cikit.libjail.*
-import org.cikit.oci.CreateCommand
-import org.cikit.oci.DeleteCommand
-import org.cikit.oci.GenericInterceptor
-import org.cikit.oci.OciConfig
+import org.cikit.oci.*
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import kotlin.io.path.*
-import kotlin.system.exitProcess
 
 private const val ociJailStateFile = "state.json"
 private const val ociJailStateLock = "state.lock"
@@ -41,6 +34,7 @@ private val json = Json {
 class OciJailInterceptor : GenericInterceptor(
     name = "intercept-ocijail",
     create = Create(),
+    start = Start(),
     delete = Delete()
 ) {
     val root by option()
@@ -134,122 +128,52 @@ private class Create : CreateCommand() {
     val runtime: OciJailInterceptor by requireObject()
 
     override fun run() {
-        val interceptorStateIn = runtime.readInterceptorState(containerId)
-        val interceptorStateOut = buildJsonObject {
-            if (interceptorStateIn != null) {
-                for ((k, v) in interceptorStateIn.entries) {
-                    put(k, v)
-                }
-            }
-            for ((k, v) in runtime.logger.saveState()) {
-                put(k, v)
+        if (runtime.readContainerState(containerId) != null) {
+            throw PrintMessage(
+                "container $containerId exists",
+                statusCode = 0,
+                printError = true
+            )
+        }
+        val state = runtime.logger.saveState() + buildJsonObject {
+            put("bundle", bundle.toAbsolutePath().pathString)
+        }
+        val ociConfigFile = bundle.resolve("config.json")
+        val ociConfigJson = ociConfigFile.readText()
+        val ociConfig = json.decodeFromString<OciConfig>(ociConfigJson)
+        runtime.logger.info("loaded oci config: $ociConfigJson")
+
+        val patchedConfig = patchConfig(ociConfig)
+        val patchedConfigJson = json.encodeToString(patchedConfig)
+        ociConfigFile.writeText(patchedConfigJson)
+        runtime.logger.info("patched oci config: $patchedConfigJson")
+
+        if (patchedConfig.annotations[OCI_ANNOTATION_VNET] == "new") {
+            startNetGraph()
+        }
+
+        val finalState = state + buildJsonObject {
+            put("oci", json.encodeToJsonElement(patchedConfig))
+        }
+
+        runtime.lockLocalStateDir {
+            runtime.writeContainerState(containerId, state)
+            try {
+                runtime.runHooks(Hooks::precreate, this, finalState)
+            } catch (ex: Throwable) {
+                runtime.deleteContainerState(containerId)
+                throw ex
             }
         }
-        try {
-            val hostUuid = buildString {
-                append(containerId.substring(0, 8))
-                append("-")
-                append(containerId.substring(8, 12))
-                append("-")
-                append(containerId.substring(12, 16))
-                append("-")
-                append(containerId.substring(16, 20))
-                append("-")
-                append(containerId.substring(20, 32))
-            }
 
-            val hostId = with(MessageDigest.getInstance("MD5")) {
-                update("$hostUuid\n".encodeToByteArray())
-                val result = digest()
-                ((result[0].toLong() and 0xFF) shl 24) or
-                        ((result[1].toLong() and 0xFF) shl 16) or
-                        ((result[2].toLong() and 0xFF) shl 8) or
-                        (result[3].toLong() and 0xFF)
-            }
-
-            val ociConfigFile = bundle.resolve("config.json")
-            val ociConfigJson = ociConfigFile.readText()
-            val ociConfig = json.decodeFromString<OciConfig>(ociConfigJson)
-            runtime.logger.info("loaded oci config: $ociConfigJson")
-
-            val patchedConfig = patchConfig(ociConfig)
-            val patchedConfigJson = json.encodeToString(patchedConfig)
-            ociConfigFile.writeText(patchedConfigJson)
-            runtime.logger.info("patched oci config: $patchedConfigJson")
-
-            if (patchedConfig.annotations[OCI_ANNOTATION_VNET] == "new") {
-                startNetGraph()
-            }
-
-            val allow = patchedConfig.annotations.mapNotNull { (k, v) ->
-                val match = k.removePrefix(OCI_ANNOTATION_ALLOW)
-                if (match != k && match.startsWith(".")) {
-                    "allow$match" to v
-                } else {
-                    null
-                }
-            }
-
-            val secureLevel = patchedConfig
-                .annotations[OCI_ANNOTATION_SECURE_LEVEL]
-
-            val hookConfig = runtime.readHookConfig()
-            if (hookConfig.precreate?.lock == false) {
-                runtime.runHook(hookConfig.precreate, this)
-            }
-            runtime.lockLocalStateDir {
-                if (hookConfig.precreate?.lock == true) {
-                    runtime.runHook(hookConfig.precreate, this)
-                }
-                if (interceptorStateIn != interceptorStateOut) {
-                    runtime.writeInterceptorState(
-                        containerId,
-                        interceptorStateOut
-                    )
-                }
-            }
-
-            val jail = callOciRuntime()
-
-            runtime.logger.info("modifying jail parameters")
-            runBlocking {
-                modifyJailParameters(
-                    jail,
-                    buildMap {
-                        put("host.hostid", hostId.toString())
-                        put("host.hostuuid", hostUuid)
-                        if (secureLevel != null) {
-                            put("securelevel", secureLevel)
-                        }
-                        putAll(allow)
-                    }
-                )
-            }
-
-            if (hookConfig.postcreate != null) {
-                runtime.runHook(hookConfig.postcreate, this)
-            }
-        } catch (ex: Throwable) {
-            runtime.logger.error(ex.toString(), ex)
-            exitProcess(1)
-        }
+        runtime.callOciRuntime(this)
+        //TBD we could get jail parameters for the postcreate hook
+        runtime.runHooks(Hooks::postcreate, this, finalState)
     }
 
     private fun patchConfig(containerConfig: OciConfig): OciConfig {
         var patchedConfig = containerConfig
         if (isJailed()) {
-            val hasVmmAllow = patchedConfig.annotations
-                .containsKey("${OCI_ANNOTATION_ALLOW}.vmm")
-            if (!hasVmmAllow && vmmAllowed()) {
-                // automatically inherit parent jail's setting
-                runtime.logger.info("inheriting allow.vmm from parent")
-                patchedConfig = patchedConfig.copy(
-                    annotations = patchedConfig.annotations + mapOf(
-                        "${OCI_ANNOTATION_ALLOW}.vmm" to "1"
-                    )
-                )
-            }
-
             // devfs rules / rulesets are not allowed inside the jail
             patchedConfig = patchedConfig.copy(
                 mounts = patchedConfig.mounts.map { mount ->
@@ -369,18 +293,95 @@ private class Create : CreateCommand() {
         val rc = ProcessBuilder(args).inheritIO().start().waitFor()
         require(rc == 0) { "devfs terminated with exit code $rc" }
     }
+}
 
-    private fun vmmAllowed(): Boolean {
-        return sysctlByNameInt32("security.jail.vmm_allowed") == 1
-    }
+private class Start : StartCommand() {
+    val runtime: OciJailInterceptor by requireObject()
 
-    private fun callOciRuntime(): JailParameters {
-        runtime.callOciRuntime(this)
-        return runBlocking {
-            readJailParameters().singleOrNull { jail ->
-                jail.name == containerId
+    override fun run() {
+        val state = runtime.readContainerState(containerId)
+            ?: throw PrintMessage(
+                "container '$containerId' not found",
+                statusCode = 1,
+                printError = true
+            )
+
+        runtime.logger.restoreState(JsonObject(state))
+
+        val jail = runBlocking {
+            val jails = readJailParameters()
+            jails.singleOrNull { p ->
+                p.name == containerId || p.jid == containerId.toIntOrNull()
             } ?: error("jail \"$containerId\" not found")
         }
+
+        val bundle = state.getValue("bundle").jsonPrimitive.content
+        val ociConfigFile = Path(bundle) / "config.json"
+        val ociConfigJson = ociConfigFile.readText()
+        val ociConfig = json.decodeFromString<OciConfig>(ociConfigJson)
+
+        val hostUuid = buildString {
+            append(containerId.substring(0, 8))
+            append("-")
+            append(containerId.substring(8, 12))
+            append("-")
+            append(containerId.substring(12, 16))
+            append("-")
+            append(containerId.substring(16, 20))
+            append("-")
+            append(containerId.substring(20, 32))
+        }
+
+        val hostId = with(MessageDigest.getInstance("MD5")) {
+            update("$hostUuid\n".encodeToByteArray())
+            val result = digest()
+            ((result[0].toLong() and 0xFF) shl 24) or
+                    ((result[1].toLong() and 0xFF) shl 16) or
+                    ((result[2].toLong() and 0xFF) shl 8) or
+                    (result[3].toLong() and 0xFF)
+        }
+
+        val allow = ociConfig.annotations.mapNotNull { (k, v) ->
+            val match = k.removePrefix(OCI_ANNOTATION_ALLOW)
+            if (match != k && match.startsWith(".")) {
+                "allow$match" to v
+            } else {
+                null
+            }
+        }
+
+        val secureLevel = ociConfig
+            .annotations[OCI_ANNOTATION_SECURE_LEVEL]
+
+        val updatedJailParameters: Map<String, String> = buildMap {
+            put("host.hostid", hostId.toString())
+            put("host.hostuuid", hostUuid)
+            if (secureLevel != null) {
+                put("securelevel", secureLevel)
+            }
+            putAll(allow)
+        }
+
+        runtime.logger.info("modifying jail parameters")
+
+        runBlocking {
+            modifyJailParameters(jail, updatedJailParameters)
+        }
+
+        val modifiedJailParameters = jail.parameters + buildJsonObject {
+            for ((k, v) in updatedJailParameters) {
+                put(k, JsonPrimitive(v))
+            }
+        }
+
+        val finalState = state + buildJsonObject {
+            put("oci", json.encodeToJsonElement(ociConfig))
+            put("jail", JsonObject(modifiedJailParameters))
+        }
+
+        runtime.runHooks(Hooks::prestart, this, finalState)
+        runtime.callOciRuntime(this)
+        runtime.runHooks(Hooks::poststart, this, finalState)
     }
 }
 
@@ -388,14 +389,17 @@ private class Delete : DeleteCommand() {
     val runtime: OciJailInterceptor by requireObject()
 
     override fun run() {
-        runtime.readInterceptorState(containerId)?.let {
-            runtime.logger.restoreState(it)
+        val state = runtime.readContainerState(containerId)
+        if (state != null) {
+            runtime.logger.restoreState(JsonObject(state))
         }
 
-        val state = runtime.readOciJailState(containerId)
+        val ociJailState = runtime.readOciJailState(containerId)
 
-        if (state != null) {
-            val status = state["status"]?.jsonPrimitive?.content ?: "unknown"
+        if (ociJailState != null) {
+            val status = ociJailState["status"]
+                ?.jsonPrimitive?.content
+                ?: "unknown"
             val canDelete = when (status) {
                 "stopped", "created" -> true
                 "running" -> force
@@ -412,58 +416,63 @@ private class Delete : DeleteCommand() {
             }
         }
 
-        val hookConfig = runtime.readHookConfig()
-        when (hookConfig.predelete?.lock) {
-            false -> runtime.runHook(hookConfig.predelete, this)
-            true -> runtime.lockLocalStateDir {
-                runtime.runHook(hookConfig.predelete, this)
-            }
-            else -> {}
-        }
-
-        runBlocking {
+        val jail = runBlocking {
             val jails = readJailParameters()
-            val jail = jails.singleOrNull { p ->
+            jails.singleOrNull { p ->
                 p.name == containerId || p.jid == containerId.toIntOrNull()
             }
-            if (jail != null) {
-                val cleanupArgs = buildList {
-                    add(runtime.interceptRcJail)
-                    runtime.logger.logFile?.let {
-                        add("--log=$it")
-                    }
-                    runtime.logger.logFormat?.let {
-                        add("--log-format=$it")
-                    }
-                    runtime.logger.logLevel?.let {
-                        add("--log-level=$it")
-                    }
-                    add("cleanup")
-                    add("-j")
-                    add(jail.name)
+        }
+
+        val finalState = if (state != null && jail != null) {
+            state + buildJsonObject {
+                put("jail", jail.parameters)
+            }
+        } else {
+            null
+        }
+
+        if (state != null) {
+            runtime.runHooks(Hooks::predelete, this, finalState ?: state)
+        }
+
+        if (jail != null) {
+            val cleanupArgs = buildList {
+                add(runtime.interceptRcJail)
+                runtime.logger.logFile?.let {
+                    add("--log=$it")
                 }
-                runtime.logger.trace(TraceEvent.Exec(cleanupArgs))
-                runtime.logger.close()
-                val rc = try {
-                    ProcessBuilder(cleanupArgs)
-                        .inheritIO()
-                        .start()
-                        .waitFor()
-                } finally {
-                    runtime.logger.open()
+                runtime.logger.logFormat?.let {
+                    add("--log-format=$it")
                 }
-                if (rc != 0) {
-                    throw PrintMessage(
-                        "delete failed", 1, printError = true
-                    )
+                runtime.logger.logLevel?.let {
+                    add("--log-level=$it")
                 }
+                add("cleanup")
+                add("-j")
+                add(jail.name)
+            }
+            runtime.logger.trace(TraceEvent.Exec(cleanupArgs))
+            runtime.logger.close()
+            val rc = try {
+                ProcessBuilder(cleanupArgs)
+                    .inheritIO()
+                    .start()
+                    .waitFor()
+            } finally {
+                runtime.logger.open()
+            }
+            if (rc != 0) {
+                throw PrintMessage(
+                    "delete failed", 1, printError = true
+                )
             }
         }
 
         runtime.callOciRuntime(this)
-        runtime.deleteInterceptorState(containerId)
-        if (hookConfig.postdelete != null) {
-            runtime.runHook(hookConfig.postdelete, this)
+
+        if (state != null) {
+            runtime.runHooks(Hooks::postdelete, this, finalState ?: state)
+            runtime.deleteContainerState(containerId)
         }
     }
 }

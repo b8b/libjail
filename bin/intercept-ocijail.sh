@@ -14,6 +14,10 @@ if [ -z "$INTERCEPT_OCI_RUNTIME_BIN" ]; then
   fi
 fi
 
+export INTERCEPT_OCI_CONFIG="$ROOTDIR"/etc/containers/oci-interceptor.conf
+export INTERCEPT_OCI_TEMPLATES_DIR="$ROOTDIR"/etc/oci-interceptor/hooks.d
+export INTERCEPT_OCI_STATE_DIR="$ROOTDIR"/tmp
+
 export INTERCEPT_OCI_RUNTIME_NAME=ocijail
 export INTERCEPT_RC_JAIL="$BINDIR"/intercept-rcjail.sh
 export INTERCEPT_RC_JAIL_JAVA_CMD="$java_cmd"

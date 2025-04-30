@@ -1,21 +1,23 @@
 package org.cikit.oci
 
-import com.akuleshov7.ktoml.Toml
 import com.github.ajalt.clikt.core.*
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.multiple
 import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.path
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
+import kotlinx.coroutines.*
+import kotlinx.serialization.json.*
+import kotlinx.serialization.json.Json.Default.decodeFromString
+import net.vieiro.toml.TOMLParser
+import org.cikit.forte.Forte
+import org.cikit.forte.core.toNioPath
+import org.cikit.forte.core.toUPath
 import org.cikit.libjail.TraceEvent
+import java.io.StringWriter
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
-import java.util.concurrent.TimeUnit
 import kotlin.error
 import kotlin.io.path.*
 
@@ -51,32 +53,52 @@ open class GenericInterceptor(
         .path(mustExist = true, canBeDir = false)
         .required()
 
-    protected val ociRuntimeFlags by argument("OCI_RUNTIME_FLAGS").multiple()
+    private val ociRuntimeFlags by argument("OCI_RUNTIME_FLAGS").multiple()
 
-    protected val overrideLog by option()
+    private val overrideLog by option()
         .help("override log file location")
         .path(canBeDir = false)
 
-    protected val overrideLogFormat by option()
+    private val overrideLogFormat by option()
         .help("override log format")
 
-    protected val localStateDir by option()
+    private val overrideLogLevel by option()
+        .help("override log level")
+
+    private val localStateDir by option(envvar = "INTERCEPT_OCI_STATE_DIR")
         .help("Override default location for interceptor state database")
         .path(canBeFile = false)
         .default(Path("/var/run/oci-interceptor"))
 
+    private val templatesDir by option(
+        "-I", "--templates",
+        envvar = "INTERCEPT_OCI_TEMPLATES_DIR"
+    ).path(canBeFile = false)
+        .help("Specify an additional location for hook templates")
+        .multiple()
+
     protected open val defaultConfigFile =
         "/usr/local/etc/containers/oci-interceptor.conf"
 
-    protected val configFile by option(
+    private val configFile by option(
         "--config",
         envvar = "INTERCEPT_OCI_CONFIG"
     ).path()
         .help("Path to interceptor config file.")
 
-    protected val configTest by option(eager = true).flag().help(
+    private val configTest by option(eager = true).flag().help(
         "Check the configuration file."
     )
+
+    open val config by lazy {
+        val addTemplates = templatesDir.map { path -> path.toUPath() }
+        val config = readInterceptorConfig()
+        config?.copy(
+            hooks = config.hooks.copy(
+                templatesDir = config.hooks.templatesDir + addTemplates
+            )
+        ) ?: InterceptorConfig(hooks = Hooks(templatesDir = addTemplates))
+    }
 
     protected val json = Json {
         encodeDefaults = false
@@ -91,17 +113,23 @@ open class GenericInterceptor(
             )
             throw PrintMessage("${configFile ?: defaultConfigFile}: OK")
         }
-        overrideLog?.let { s ->
-            logger.overrideLogFile(s.pathString)
-            logger.logFormat = if (s.endsWith(".json")) {
-                "json"
-            } else {
-                "text"
-            }
-        }
-        overrideLogFormat?.let { f ->
-            logger.logFormat = f
-        }
+        overrideLog
+            ?: config.interceptor.overrideLog
+                ?.let { Path(it) }
+                ?.let { s ->
+                    logger.overrideLogFile(s.pathString)
+                    logger.logFormat = if (s.endsWith(".json")) {
+                        "json"
+                    } else {
+                        "text"
+                    }
+                }
+        overrideLogFormat
+            ?: config.interceptor.overrideLogFormat
+                ?.let { f -> logger.logFormat = f }
+        overrideLogLevel
+            ?: config.interceptor.overrideLogLevel
+                ?.let { level -> logger.logLevel = level }
         super.run()
         if (currentContext.invokedSubcommand == null) {
             throw PrintHelpMessage(
@@ -225,63 +253,209 @@ open class GenericInterceptor(
         }
     }
 
+    private fun parseInterceptorConfig(input: String): InterceptorConfig {
+        val jsonInput = StringWriter().use { w ->
+            TOMLParser.parseFromString(input).writeJSON(w)
+            w.flush()
+            w.toString()
+        }
+        return Json.decodeFromString(jsonInput)
+    }
+
     fun readInterceptorConfig(): InterceptorConfig? {
         return (configFile ?: Path(defaultConfigFile).takeIf { it.exists() })
             ?.readText()
-            ?.let { Toml.decodeFromString<InterceptorConfig>(it) }
+            ?.let { parseInterceptorConfig(it) }
     }
 
-    fun readHookConfig(): InterceptorConfig.Hooks {
-        return readInterceptorConfig()?.hooks ?: InterceptorConfig.Hooks()
+    private val forte = Forte {}
+
+    private fun JsonElement.toAny(): Any? = when (this) {
+        is JsonNull -> null
+        is JsonPrimitive -> booleanOrNull
+            ?: intOrNull
+            ?: longOrNull
+            ?: doubleOrNull
+            ?: contentOrNull
+        is JsonArray -> map { it.toAny() }
+        is JsonObject -> entries.associate { (k, v) -> k to v.toAny() }
     }
 
-    fun runHook(
-        hook: InterceptorConfig.HookConfig,
-        command: OciCommand
+    private fun MutableMap<String, Any?>.addVars(
+        phase: Phase,
+        command: OciCommand,
+        vars: Map<String, JsonElement>,
     ) {
-        val args = hook.interpreter + listOf(
-            hook.script,
-            "pre$commandName"
-        ) + rebuildOptions(command)
+        put("phase", phase.name)
+        put("command", command.commandName)
+        put("containerId", command.containerId)
+        val bundle = (vars["bundle"] as? JsonPrimitive)?.contentOrNull
+        if (bundle != null) {
+            put("bundle", bundle)
+            if (!vars.containsKey("oci")) {
+                val ociConfigFile = (Path(bundle) / "config.json")
+                if (ociConfigFile.exists()) {
+                    val ociConfig = decodeFromString<JsonObject>(
+                        ociConfigFile.readText()
+                    )
+                    put("oci", ociConfig.toAny())
+                }
+            }
+        }
+        for ((k, v) in vars) {
+            if (!containsKey(k)) {
+                put(k, v.toAny())
+            }
+        }
+    }
+
+    private fun runHook(
+        hook: HookConfig,
+        command: OciCommand,
+        vars: MutableMap<String, Any?>
+    ) {
+        if (!hook.enabled) {
+            return
+        }
+        vars["hook"] = mapOf(
+            "timeout" to hook.timeout,
+            "preempt" to hook.preempt,
+        )
+        val script = hook.template?.let { path ->
+            val search = config.hooks.templatesDir
+            val fullPath = if (path.isAbsolute) {
+                path.toNioPath().takeIf { it.exists() }
+            } else {
+                search
+                    .lastOrNull { d -> d.append(path).toNioPath().exists() }
+                    ?.append(path)?.toNioPath()
+            }
+            if (fullPath == null) {
+                logger.warn("failed to load template '$path': " +
+                        "file not found in any template_dir $search")
+                if (hook.preempt) {
+                    throw java.nio.file.NoSuchFileException(path.pathString)
+                } else {
+                    return
+                }
+            }
+            try {
+                val templateSrc = fullPath.readText()
+                forte.evalTemplateToString(templateSrc, path, vars)
+            } catch (ex: Exception) {
+                logger.warn("failed to render template '$fullPath': $ex", ex)
+                if (hook.preempt) {
+                    throw ex
+                } else {
+                    null
+                }
+            } ?: return
+        }
+        if (script?.isBlank() == true) {
+            // template rendered to empty string
+            return
+        }
+        val commandArgs = hook.command.map { arg ->
+            try {
+                forte.evalTemplateToString(arg, vars = vars)
+            } catch (ex: Exception) {
+                logger.warn("failed to render arg '$arg': $ex", ex)
+                if (hook.preempt) {
+                    throw ex
+                } else {
+                    return
+                }
+            }
+        }
+        val args = commandArgs + when (hook.appendArgs) {
+            true -> rebuildOptions(command)
+            false -> emptyList()
+        }
         logger.trace(TraceEvent.Exec(args))
         val pb = ProcessBuilder(args)
-        pb.inheritIO()
-        if (localStateDir.isDirectory()) {
-            pb.directory(localStateDir.toFile())
+        pb.redirectErrorStream(true)
+        pb.directory(localStateDir.toFile())
+        with (pb.environment()) {
+            put("CID", command.containerId)
         }
-        pb.environment()["CID"] = command.containerId
         val p = pb.start()
-        var timeout = false
-        if (!p.waitFor(hook.timeout, TimeUnit.SECONDS)) {
-            timeout = true
+        val output = runBlocking(Dispatchers.IO) {
+            withTimeoutOrNull(hook.timeout * 1_000L) {
+                launch {
+                    p.outputStream.bufferedWriter().use { w ->
+                        script?.let { w.appendLine(it) }
+                    }
+                }
+                async {
+                    p.inputStream.use { String(it.readBytes()) }
+                }.await()
+            }
+        }
+        if (output == null) {
             p.destroyForcibly()
         }
         val rc = p.waitFor()
-        if (timeout) {
+        if (output == null) {
             if (hook.preempt) {
                 error("hook script killed after ${hook.timeout} second(s)")
             }
             logger.warn("hook script killed after ${hook.timeout} second(s)")
+            return
         }
         if (rc != 0) {
+            logger.warn("hook script terminated with exit code $rc: $output")
             if (hook.preempt) {
-                error("hook script terminated with exit code $rc")
+                error("hook script terminated with exit code $rc: $output")
             }
-            logger.warn("hook script terminated with exit code $rc")
+            return
+        }
+        if (output.isNotBlank()) {
+            logger.info("hook script terminated successfully: $output")
         }
     }
 
-    fun readInterceptorState(containerId: String): JsonObject? {
+    fun runHook(
+        phase: Phase,
+        hook: HookConfig,
+        command: OciCommand,
+        vars: Map<String, JsonElement> = emptyMap()
+    ) {
+        if (!hook.enabled) {
+            return
+        }
+        buildMap {
+            addVars(phase, command, vars)
+            runHook(hook, command, this)
+        }
+    }
+
+    fun runHooks(
+        phase: Phase,
+        command: OciCommand,
+        vars: Map<String, JsonElement>
+    ) {
+        buildMap {
+            addVars(phase, command, vars)
+            for (hook in phase.get(config.hooks)) {
+                runHook(hook, command, this)
+            }
+        }
+    }
+
+    fun readContainerState(containerId: String): Map<String, JsonElement>? {
         val stateFile = localStateDir / "$containerId.json"
         if (stateFile.parent?.exists() != true) {
             return null
         }
-        val stateJson = FileChannel.open(
-            stateFile,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.READ,
-            StandardOpenOption.WRITE
-        ).use { fc ->
+        val stateJson = try {
+            FileChannel.open(
+                stateFile,
+                StandardOpenOption.READ,
+                StandardOpenOption.WRITE,
+            )
+        } catch (_: java.nio.file.NoSuchFileException) {
+            return null
+        }.use { fc ->
             fc.lock().use { lock ->
                 require(lock.isValid) { "error locking $stateFile" }
                 if (stateFile.isReadable()) {
@@ -298,32 +472,53 @@ open class GenericInterceptor(
         }
     }
 
-    fun writeInterceptorState(containerId: String, state: JsonObject) {
-        val stateJson = json.encodeToString(state)
+    fun writeContainerState(
+        containerId: String,
+        state: Map<String, JsonElement>,
+    ) {
+        val stateJson = json.encodeToString(state).encodeToByteArray()
         val stateFile = localStateDir / "$containerId.json"
+        val stateFileTmp = localStateDir / "$containerId.json~"
         stateFile.parent?.let {
             if (!it.exists()) {
                 it.createDirectories()
             }
         }
         FileChannel.open(
-            stateFile,
+            stateFileTmp,
             StandardOpenOption.CREATE,
             StandardOpenOption.READ,
             StandardOpenOption.WRITE,
         ).use { fc ->
             fc.lock().use { lock ->
-                require(lock.isValid) { "error locking $stateFile" }
+                require(lock.isValid) { "error locking $stateFileTmp" }
                 fc.truncate(0L)
-                fc.write(ByteBuffer.wrap(stateJson.encodeToByteArray()))
+                fc.write(ByteBuffer.wrap(stateJson))
+                fc.force(false)
+                stateFileTmp.moveTo(stateFile, overwrite = true)
             }
         }
     }
 
-    fun deleteInterceptorState(containerId: String) {
+    fun deleteContainerState(containerId: String) {
         val stateFile = localStateDir / "$containerId.json"
-        if (stateFile.exists()) {
-            stateFile.deleteIfExists()
+        stateFile.parent?.let {
+            if (!it.exists()) {
+                return
+            }
+        }
+        val stateFileTmp = localStateDir / "$containerId.json~"
+        FileChannel.open(
+            stateFileTmp,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.READ,
+            StandardOpenOption.WRITE,
+            StandardOpenOption.DELETE_ON_CLOSE
+        ).use { fc ->
+            fc.lock().use { lock ->
+                require(lock.isValid) { "error locking $stateFileTmp" }
+                stateFile.deleteIfExists()
+            }
         }
     }
 
@@ -352,36 +547,27 @@ open class GenericInterceptor(
         val runtime: GenericInterceptor by requireObject()
 
         override fun run() {
-            val interceptorStateIn = runtime.readInterceptorState(containerId)
-            val interceptorStateOut = buildJsonObject {
-                if (interceptorStateIn != null) {
-                    for ((k, v) in interceptorStateIn.entries) {
-                        put(k, v)
-                    }
-                }
-                for ((k, v) in runtime.logger.saveState()) {
-                    put(k, v)
-                }
+            if (runtime.readContainerState(containerId) != null) {
+                throw PrintMessage(
+                    "container '$containerId' exists",
+                    statusCode = 1,
+                    printError = true
+                )
             }
-            val hookConfig = runtime.readHookConfig()
-            if (hookConfig.precreate?.lock == false) {
-                runtime.runHook(hookConfig.precreate, this)
+            val state = runtime.logger.saveState() + buildJsonObject {
+                put("bundle", bundle.toAbsolutePath().pathString)
             }
             runtime.lockLocalStateDir {
-                if (hookConfig.precreate?.lock == true) {
-                    runtime.runHook(hookConfig.precreate, this)
-                }
-                if (interceptorStateIn != interceptorStateOut) {
-                    runtime.writeInterceptorState(
-                        containerId,
-                        interceptorStateOut
-                    )
+                runtime.writeContainerState(containerId, state)
+                try {
+                    runtime.runHooks(Hooks::precreate, this, state)
+                } catch (ex: Throwable) {
+                    runtime.deleteContainerState(containerId)
+                    throw ex
                 }
             }
             runtime.callOciRuntime(this)
-            if (hookConfig.postcreate != null) {
-                runtime.runHook(hookConfig.postcreate, this)
-            }
+            runtime.runHooks(Hooks::postcreate, this, state)
         }
     }
 
@@ -389,21 +575,15 @@ open class GenericInterceptor(
         val runtime: GenericInterceptor by requireObject()
 
         override fun run() {
-            runtime.readInterceptorState(containerId)?.let {
-                runtime.logger.restoreState(it)
-            }
-            val hookConfig = runtime.readHookConfig()
-            when (hookConfig.predelete?.lock) {
-                false -> runtime.runHook(hookConfig.predelete, this)
-                true -> runtime.lockLocalStateDir {
-                    runtime.runHook(hookConfig.predelete, this)
-                }
-                else -> {}
+            val state = runtime.readContainerState(containerId)
+            if (state != null) {
+                runtime.logger.restoreState(JsonObject(state))
+                runtime.runHooks(Hooks::predelete, this, state)
             }
             runtime.callOciRuntime(this)
-            runtime.deleteInterceptorState(containerId)
-            if (hookConfig.postdelete != null) {
-                runtime.runHook(hookConfig.postdelete, this)
+            if (state != null) {
+                runtime.runHooks(Hooks::postdelete, this, state)
+                runtime.deleteContainerState(containerId)
             }
         }
     }
@@ -412,20 +592,14 @@ open class GenericInterceptor(
         val runtime: GenericInterceptor by requireObject()
 
         override fun run() {
-            runtime.readInterceptorState(containerId)?.let {
-                runtime.logger.restoreState(it)
-            }
-            val hookConfig = runtime.readHookConfig()
-            when (hookConfig.preexec?.lock) {
-                false -> runtime.runHook(hookConfig.preexec, this)
-                true -> runtime.lockLocalStateDir {
-                    runtime.runHook(hookConfig.preexec, this)
-                }
-                else -> {}
+            val state = runtime.readContainerState(containerId)
+            if (state != null) {
+                runtime.logger.restoreState(JsonObject(state))
+                runtime.runHooks(Hooks::preexec, this, state)
             }
             runtime.callOciRuntime(this)
-            if (hookConfig.postexec != null) {
-                runtime.runHook(hookConfig.postexec, this)
+            if (state != null) {
+                runtime.runHooks(Hooks::postexec, this, state)
             }
         }
     }
@@ -434,20 +608,14 @@ open class GenericInterceptor(
         val runtime: GenericInterceptor by requireObject()
 
         override fun run() {
-            runtime.readInterceptorState(containerId)?.let {
-                runtime.logger.restoreState(it)
-            }
-            val hookConfig = runtime.readHookConfig()
-            when (hookConfig.prekill?.lock) {
-                false -> runtime.runHook(hookConfig.prekill, this)
-                true -> runtime.lockLocalStateDir {
-                    runtime.runHook(hookConfig.prekill, this)
-                }
-                else -> {}
+            val state = runtime.readContainerState(containerId)
+            if (state != null) {
+                runtime.logger.restoreState(JsonObject(state))
+                runtime.runHooks(Hooks::prekill, this, state)
             }
             runtime.callOciRuntime(this)
-            if (hookConfig.postkill != null) {
-                runtime.runHook(hookConfig.postkill, this)
+            if (state != null) {
+                runtime.runHooks(Hooks::postkill, this, state)
             }
         }
     }
@@ -461,20 +629,14 @@ open class GenericInterceptor(
         val runtime: GenericInterceptor by requireObject()
 
         override fun run() {
-            runtime.readInterceptorState(containerId)?.let {
-                runtime.logger.restoreState(it)
-            }
-            val hookConfig = runtime.readHookConfig()
-            when (hookConfig.prestart?.lock) {
-                false -> runtime.runHook(hookConfig.prestart, this)
-                true -> runtime.lockLocalStateDir {
-                    runtime.runHook(hookConfig.prestart, this)
-                }
-                else -> {}
+            val state = runtime.readContainerState(containerId)
+            if (state != null) {
+                runtime.logger.restoreState(JsonObject(state))
+                runtime.runHooks(Hooks::prestart, this, state)
             }
             runtime.callOciRuntime(this)
-            if (hookConfig.poststart != null) {
-                runtime.runHook(hookConfig.poststart, this)
+            if (state != null) {
+                runtime.runHooks(Hooks::poststart, this, state)
             }
         }
     }
@@ -483,8 +645,9 @@ open class GenericInterceptor(
         val runtime: GenericInterceptor by requireObject()
 
         override fun run() {
-            runtime.readInterceptorState(containerId)?.let {
-                runtime.logger.restoreState(it)
+            val state = runtime.readContainerState(containerId)
+            if (state != null) {
+                runtime.logger.restoreState(JsonObject(state))
             }
             runtime.callOciRuntime(this)
         }

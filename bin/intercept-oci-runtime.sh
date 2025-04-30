@@ -16,6 +16,10 @@ if [ -z "$java_cmd" ]; then
   fi
 fi
 
+export INTERCEPT_OCI_CONFIG="$ROOTDIR"/etc/containers/oci-interceptor.conf
+export INTERCEPT_OCI_TEMPLATES_DIR="$ROOTDIR"/etc/oci-interceptor/hooks.d
+export INTERCEPT_OCI_STATE_DIR="$ROOTDIR"/tmp
+
 # __kotlin_script_installer__
 #
 #    _         _   _ _                       _       _
@@ -55,8 +59,11 @@ fi
 ///DEP=org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.8.1
 ///DEP=org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.8.1
 
-///DEP=com.akuleshov7:ktoml-core-jvm:0.6.0
-///DEP=org.jetbrains.kotlinx:kotlinx-datetime-jvm:0.6.2
+///DEP=net.vieiro:toml-java:13.4.2
+///DEP=org.antlr:antlr4-runtime:4.13.1
+
+///DEP=org.cikit:forte-jvm:0.4.2
+///DEP=org.jetbrains.kotlinx:kotlinx-io-bytestring-jvm:0.7.0
 
 ///DEP=com.github.ajalt.clikt:clikt-jvm:5.0.3
 ///DEP=com.github.ajalt.clikt:clikt-core-jvm:5.0.3

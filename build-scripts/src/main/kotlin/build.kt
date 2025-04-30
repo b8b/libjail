@@ -129,17 +129,19 @@ fun main() {
         "mordant-jvm-ffm-jvm" to "com.github.ajalt.mordant.ffm"
 
     val modsToCombine = mapOf(
-        "clikt-combined" to listOf("clikt-core-jvm", "clikt-jvm")
+        "clikt-combined" to listOf("clikt-core-jvm", "clikt-jvm"),
+        "toml-java-combined" to listOf("antlr4-runtime", "toml-java")
     )
 
     val modsToPatch = mapOf(
         "jna" to "com.sun.jna",
         "libjail" to "org.cikit.libjail",
-        "ktoml-core-jvm" to "ktoml.core",
+        "forte-jvm" to "org.cikit.forte",
         "colormath-jvm" to "com.github.ajalt.colormath",
         "mordant-core-jvm" to "com.github.ajalt.mordant.core",
         mordantNativeMod.first to mordantNativeMod.second,
         "clikt-combined" to "com.github.ajalt.clikt",
+        "toml-java-combined" to "net.vieiro.toml",
         "oci-interceptor" to "org.cikit.oci.interceptor"
     )
 
@@ -149,6 +151,7 @@ fun main() {
         "kotlinx-serialization-core-jvm" to "kotlinx.serialization.core",
         "kotlinx-serialization-json-jvm" to "kotlinx.serialization.json",
         "kotlinx-datetime-jvm" to "kotlinx.datetime",
+        "kotlinx-io-bytestring-jvm" to "kotlinx.io.bytestring",
     )
 
     val modulePath = mutableListOf<Path>()

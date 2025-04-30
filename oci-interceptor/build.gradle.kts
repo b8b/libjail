@@ -18,6 +18,7 @@ dependencies {
 
     api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
-    api("com.akuleshov7:ktoml-core-jvm:0.6.0")
+    api("net.vieiro:toml-java:13.4.2")
+    api("org.cikit:forte-jvm:0.4.2")
     api("com.github.ajalt.clikt:clikt:5.0.3")
 }

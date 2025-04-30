@@ -1,5 +1,6 @@
 [package]
 name = "rust-jail-cleanup"
+edition = "2024"
 
 [dependencies]
 jail = "0.3.0"

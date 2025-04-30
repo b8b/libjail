@@ -34,7 +34,7 @@ use std::ffi::CString;
 use libc::{c_char, c_int};
 use nix::errno::Errno;
 
-extern "C" {
+unsafe extern "C" {
     fn unmount(dir: *const c_char, flags: c_int) -> c_int;
 }
 

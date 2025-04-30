@@ -111,8 +111,8 @@ class OciLogger(
         trace(TraceEvent.Info(msg))
     }
 
-    fun warn(msg: String) {
-        trace(TraceEvent.Warn(msg))
+    fun warn(msg: String, ex: Throwable? = null) {
+        trace(TraceEvent.Warn(msg, ex))
     }
 
     fun error(msg: String, ex: Throwable? = null) {
@@ -123,41 +123,48 @@ class OciLogger(
         val evLevel: Int
         val evLevelString: String
         val evMsgString: String
+        val evEx: Throwable?
         when (ev) {
             is TraceEvent.Ffi -> {
                 evLevel = 2
                 evLevelString = "debug"
                 evMsgString = "+ ${ev.func}(${ev.args.joinToString(", ")})"
+                evEx = null
             }
 
             is TraceEvent.Exec -> {
                 evLevel = 2
                 evLevelString = "debug"
                 evMsgString = "+ ${ev.args.joinToString(" ")}"
+                evEx = null
             }
 
             is TraceEvent.Debug -> {
                 evLevel = 2
                 evLevelString = "debug"
                 evMsgString = ev.msg
+                evEx = null
             }
 
             is TraceEvent.Info -> {
                 evLevel = 1
                 evLevelString = "info"
                 evMsgString = ev.msg
+                evEx = null
             }
 
             is TraceEvent.Warn -> {
                 evLevel = 0
                 evLevelString = "warn"
                 evMsgString = ev.msg
+                evEx = ev.ex
             }
 
             is TraceEvent.Err -> {
                 evLevel = 0
                 evLevelString = "error"
                 evMsgString = ev.msg
+                evEx = ev.ex
             }
         }
         val now = OffsetDateTime.now().toString()
@@ -168,13 +175,15 @@ class OciLogger(
                 "2", "debug" -> 3
                 else -> 1
             }
+
             if (logToConsole) {
-                if (ev is TraceEvent.Err && finalLogLevel >= 3) {
-                    ev.ex
+                if (finalLogLevel >= evLevel) {
+                    System.err.println(evMsgString)
+                }
+                if (finalLogLevel >= 3) {
+                    evEx
                         ?.printStackTrace()
                         ?: System.err.println(evMsgString)
-                } else if (finalLogLevel >= evLevel) {
-                    System.err.println(evMsgString)
                 }
             } else {
                 val writer = w ?: return@synchronized
@@ -184,18 +193,26 @@ class OciLogger(
                             put("msg", evMsgString)
                             put("level", evLevelString)
                             put("time", now)
+                            if (evEx != null) {
+                                put("stacktrace", evEx.stackTraceToString())
+                            }
                         }
                     )
                 } else {
-                    "${ev.javaClass.simpleName} $evLevelString: $evMsgString"
+                    "${ev.javaClass.simpleName} $evLevelString: $evMsgString" +
+                            if (evEx != null) {
+                                "\n" + evEx.stackTraceToString()
+                            } else {
+                                ""
+                            }
                 }
                 writer.appendLine(line)
                 writer.flush()
                 if (ev is TraceEvent.Err) {
+                    System.err.println(evMsgString)
                     ev.ex
                         ?.takeIf { finalLogLevel >= 3 }
                         ?.printStackTrace()
-                        ?: System.err.println(evMsgString)
                 }
             }
         }

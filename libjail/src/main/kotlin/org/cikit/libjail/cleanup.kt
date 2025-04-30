@@ -271,7 +271,12 @@ private fun cleanupVmmDevicesAttached(vmmDevices: Set<String>): Int {
                 }
             }
         } catch (ex: Exception) {
-            trace(TraceEvent.Warn("failed to destroy vmm device \"$vm\":", ex))
+            trace(
+                TraceEvent.Warn(
+                    "failed to destroy vmm device \"$vm\": $ex",
+                    ex
+                )
+            )
             rcAll = 1
         }
     }

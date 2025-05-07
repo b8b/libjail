@@ -62,7 +62,7 @@ fi
 ///DEP=net.vieiro:toml-java:13.4.2
 ///DEP=org.antlr:antlr4-runtime:4.13.1
 
-///DEP=org.cikit:forte-jvm:0.4.2
+///DEP=org.cikit:forte-jvm:0.4.4
 ///DEP=org.jetbrains.kotlinx:kotlinx-io-bytestring-jvm:0.7.0
 
 ///DEP=com.github.ajalt.clikt:clikt-jvm:5.0.3

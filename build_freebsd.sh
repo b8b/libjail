@@ -2,8 +2,6 @@
 
 set -e
 
-export LIBJAIL_VERSION="${LIBJAIL_VERSION:=0.0.1}"
-
 if [ -e target/libjail ]; then
   echo "target/libjail already exists. remove to run a fresh build!" >&2
   exit 1
@@ -20,17 +18,12 @@ fi
       FreeBSD-utilities-dev FreeBSD-libexecinfo-dev \
       FreeBSD-libcompiler_rt-dev FreeBSD-libbsm-dev FreeBSD-openssl-lib-dev \
       FreeBSD-tcpd-dev openjdk24 rust \
-  --then run /usr/bin/env \
-      LIBJAIL_VERSION="$LIBJAIL_VERSION" \
-      sh -c 'set -e
+  --then run --shell 'set -e
       export JAVA_HOME=/usr/local/openjdk24
       cd /src/rust-jail-cleanup && cargo build --release --locked
       cd /src/rust-java-launcher && cargo build --release --locked
       cd /src/jail-mntinfo-kmod && make
       cd /src && ./build-scripts/src/main/kotlin/build.kt
-      freebsd_version="`freebsd-version`"
-      freebsd_version="`uname -s`${freebsd_version%%[!0-9]*}-`uname -m`"
-      echo "$LIBJAIL_VERSION"-"$freebsd_version" > target/libjail/VERSION
       target/libjail/bin/java \
         -XX:AOTMode=record -XX:AOTConfiguration=target/libjail/app.aotconf \
         --enable-native-access=com.github.ajalt.mordant.ffm \
@@ -45,6 +38,7 @@ fi
       '
 
 read -r VERSION < target/libjail/VERSION
+
 cp LICENSE target/libjail/
 
 cp rust-java-launcher/target/release/rust-java-launcher target/libjail/bin/jpkg

@@ -60,6 +60,15 @@ import kotlin.system.exitProcess
 private val baseDir = Path(".")
 private val targetDir = baseDir / "target"
 private val version = System.getenv("LIBJAIL_VERSION") ?: "0.0.3-dev"
+private val os = System.getProperty("os.name").lowercase().let { osName ->
+    if (osName == "freebsd") {
+        osName + System.getProperty("os.version")
+            .replace("""\D.*$""".toRegex(), "")
+    } else {
+        osName
+    }
+}
+private val arch = System.getProperty("os.arch")
 
 fun main() {
     require(Native.SIZE_T_SIZE == 8) {
@@ -223,16 +232,29 @@ fun main() {
                 append("--add-modules org.cikit.oci.interceptor,${mordantNativeMod.second} ")
                 append("--no-header-files ")
                 append("--no-man-pages ")
+                for ((launcher, mainClass) in mapOf(
+                    "intercept-oci-runtime" to "org.cikit.oci.GenericInterceptor",
+                    "intercept-ocijail" to "org.cikit.oci.jail.OciJailInterceptor",
+                    "intercept-rcjail" to "org.cikit.oci.jail.RcJailInterceptor",
+                    "jpkg" to "org.cikit.oci.jail.JPkgCommand",
+                )) {
+                    append("--launcher $launcher=org.cikit.oci.interceptor/$mainClass ")
+                }
                 append("--output \${WORKDIR:-target}/libjail")
             }
         )
     }
 
-    ProcessBuilder("/bin/sh", "-xc", buildScript)
+    val rc = ProcessBuilder("/bin/sh", "-xc", buildScript)
         .inheritIO()
         .start()
         .waitFor()
-        .let { rc -> exitProcess(rc) }
+
+    Path("target/libjail/VERSION").writeText(
+        "$version-$os-$arch\n"
+    )
+
+    exitProcess(rc)
 }
 
 private fun compileLibJail(): Path {

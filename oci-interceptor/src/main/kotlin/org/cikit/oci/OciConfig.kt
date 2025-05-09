@@ -14,7 +14,8 @@ data class OciConfig(
 ) {
     @Serializable
     data class Root(
-        val path: String
+        val path: String,
+        val readonly: Boolean = false,
     )
 
     @Serializable

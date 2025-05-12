@@ -179,11 +179,9 @@ class OciLogger(
             if (logToConsole) {
                 if (finalLogLevel >= evLevel) {
                     System.err.println(evMsgString)
-                }
-                if (finalLogLevel >= 3) {
-                    evEx
-                        ?.printStackTrace()
-                        ?: System.err.println(evMsgString)
+                    if (finalLogLevel >= 3) {
+                        evEx?.printStackTrace()
+                    }
                 }
             } else {
                 val writer = w ?: return@synchronized

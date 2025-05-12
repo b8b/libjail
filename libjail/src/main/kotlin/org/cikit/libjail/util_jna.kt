@@ -9,7 +9,6 @@ internal object Ffi : FfiFunctions {
         flags: Int,
         errorHandler: (String, Int) -> Unit
     ) {
-        trace(TraceEvent.Ffi("nmount", listOf(iov, flags).map(Any::toString)))
         val iovArray = iov.toIov()
         val rc = FREEBSD_LIBC.nmount(iovArray, iovArray.size, flags)
         if (rc != 0) {
@@ -22,7 +21,6 @@ internal object Ffi : FfiFunctions {
         flags: Int,
         errorHandler: (String, Int) -> Unit
     ) {
-        trace(TraceEvent.Ffi("unmount", dir, flags.toString()))
         val rc = FREEBSD_LIBC.unmount(
             dir,
             (flags.toLong() and 0xFFFFFFFF).toInt()
@@ -36,7 +34,6 @@ internal object Ffi : FfiFunctions {
         jid: Int,
         errorHandler: (String, Int) -> Unit
     ) {
-        trace(TraceEvent.Ffi("jail_attach", "$jid"))
         val rc = FREEBSD_LIBC.jail_attach(jid)
         if (rc != 0) {
             error("jail_attach(): error code ${Native.getLastError()}")
@@ -47,7 +44,6 @@ internal object Ffi : FfiFunctions {
         jid: Int,
         errorHandler: (String, Int) -> Unit
     ) {
-        trace(TraceEvent.Ffi("jail_remove", "$jid"))
         val rc = FREEBSD_LIBC.jail_remove(jid)
         if (rc != 0) {
             error("jail_remove(): error code ${Native.getLastError()}")

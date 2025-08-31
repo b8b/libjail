@@ -7,18 +7,17 @@ import com.github.ajalt.clikt.parameters.options.*
 import com.github.ajalt.clikt.parameters.types.path
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
-import kotlinx.serialization.json.Json.Default.decodeFromString
 import net.vieiro.toml.TOMLParser
 import org.cikit.forte.Forte
 import org.cikit.forte.core.toNioPath
 import org.cikit.forte.core.toUPath
+import org.cikit.forte.eval.evalTemplate
 import org.cikit.libjail.TraceEvent
 import java.io.StringWriter
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
-import kotlin.error
 import kotlin.io.path.*
 
 open class GenericInterceptor(
@@ -295,7 +294,7 @@ open class GenericInterceptor(
             if (!vars.containsKey("oci")) {
                 val ociConfigFile = (Path(bundle) / "config.json")
                 if (ociConfigFile.exists()) {
-                    val ociConfig = decodeFromString<JsonObject>(
+                    val ociConfig = Json.decodeFromString<JsonObject>(
                         ociConfigFile.readText()
                     )
                     put("oci", ociConfig.toAny())
@@ -341,7 +340,16 @@ open class GenericInterceptor(
             }
             try {
                 val templateSrc = fullPath.readText()
-                forte.evalTemplateToString(templateSrc, path, vars)
+                val template = forte.parseTemplate(
+                    templateSrc,
+                    fullPath.toUPath()
+                )
+                runBlocking {
+                    forte.captureToString()
+                        .setVars(vars)
+                        .evalTemplate(template)
+                        .result
+                }
             } catch (ex: Exception) {
                 logger.warn("failed to render template '$fullPath': $ex", ex)
                 if (hook.preempt) {
@@ -357,7 +365,13 @@ open class GenericInterceptor(
         }
         val commandArgs = hook.command.map { arg ->
             try {
-                forte.evalTemplateToString(arg, vars = vars)
+                val template = forte.parseTemplate(arg)
+                runBlocking {
+                    forte.captureToString()
+                        .setVars(vars)
+                        .evalTemplate(template)
+                        .result
+                }
             } catch (ex: Exception) {
                 logger.warn("failed to render arg '$arg': $ex", ex)
                 if (hook.preempt) {

@@ -30,7 +30,7 @@ export INTERCEPT_OCI_STATE_DIR="$ROOTDIR"/tmp
 #   |_|\_\___/ \__|_|_|_| |_| |___/\___|_|  |_| .__/ \__|
 #                         ______              | |
 #                        |______|             |_|
-v=2.1.20.27
+v=2.2.10.29
 p=org/cikit/kotlin_script/"$v"/kotlin_script-"$v".sh
 url="${M2_CENTRAL_REPO:=https://repo1.maven.org/maven2}"/"$p"
 kotlin_script_sh="${M2_LOCAL_REPO:-"$HOME"/.m2/repository}"/"$p"
@@ -45,7 +45,7 @@ if ! [ -r "$kotlin_script_sh" ]; then
   fi
   dgst_cmd="$(command -v openssl) dgst -sha256 -r" || dgst_cmd=sha256sum
   case "$($dgst_cmd < "$kotlin_script_sh")" in
-  "91fa8e996088689e2235e5eccd48c2046f9562b3f25d64bed9d8259d57e3fe9f "*) ;;
+  "f7710c773e7b67c75fa842986d1abede08396b92c3d30b55caaacf600200d923 "*) ;;
   *) echo "error: failed to verify kotlin_script.sh" >&2
      rm -f "$kotlin_script_sh"; exit 1;;
   esac
@@ -54,15 +54,15 @@ fi
 
 ///PLUGIN=org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable
 
-///DEP=org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.1
+///DEP=org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2
 
-///DEP=org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.8.1
-///DEP=org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.8.1
+///DEP=org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.9.0
+///DEP=org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0
 
 ///DEP=net.vieiro:toml-java:13.4.2
 ///DEP=org.antlr:antlr4-runtime:4.13.1
 
-///DEP=org.cikit:forte-jvm:0.4.4
+///DEP=org.cikit:forte-jvm:0.5.0
 ///DEP=org.jetbrains.kotlinx:kotlinx-io-bytestring-jvm:0.7.0
 
 ///DEP=com.github.ajalt.clikt:clikt-jvm:5.0.3

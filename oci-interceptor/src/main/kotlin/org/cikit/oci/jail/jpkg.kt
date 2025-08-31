@@ -119,7 +119,7 @@ class JPkgCommand : CliktCommand("jpkg") {
     private val src by mutuallyExclusiveOptions(
         option("--from").help(
             """Create and mount a container from the specified image using 
-            'buildah'. Then create a jail using the container mount path."""
+            'podman'. Then create a jail using the container mount path."""
         ),
         option("--path").path(canBeFile = false).help(
             "Create a jail using an existing root directory."
@@ -508,24 +508,24 @@ class JPkgPipelineBuilder(
             }
         }
         val realTmpDir = tmpDir.toRealPath()
-        val buildahHome: Path?
+        val podmanHome: Path?
         val cid: String?
         val rootPath = if (from != null) {
-            buildahHome = buildahHome()
-            cid = buildahProcess(
-                buildahHome,
-                "from",
+            podmanHome = podmanHome()
+            cid = podmanProcess(
+                podmanHome,
+                "create",
                 "--name=${tmpDir.name}",
                 from
             ).pReadLines { lines -> lines.last() }
             cleanups += {
-                buildahProcess(buildahHome, "rm", cid).pReadLines {}
+                podmanProcess(podmanHome, "rm", cid).pReadLines {}
             }
-            val mp = buildahProcess(buildahHome, "mount", cid)
+            val mp = podmanProcess(podmanHome, "mount", cid)
                 .pReadLines { lines -> lines.last() }
             Path(mp)
         } else {
-            buildahHome = null
+            podmanHome = null
             cid = null
             root
         }
@@ -560,15 +560,15 @@ class JPkgPipelineBuilder(
             }
             unmount(realTmpDir, step.mount)
             step.commit?.let { tag ->
-                require(buildahHome != null)
+                require(podmanHome != null)
                 require(cid != null)
-                buildahProcess(buildahHome, "commit", cid, tag).pReadLines {}
+                podmanProcess(podmanHome, "commit", cid, tag).pReadLines {}
             }
         }
         commit?.let { tag ->
-            require(buildahHome != null)
+            require(podmanHome != null)
             require(cid != null)
-            buildahProcess(buildahHome, "commit", cid, tag).pReadLines {}
+            podmanProcess(podmanHome, "commit", cid, tag).pReadLines {}
         }
     }
 
@@ -1010,17 +1010,17 @@ class JPkgPipelineBuilder(
         return pwd
     }
 
-    private fun buildahHome(): Path {
+    private fun podmanHome(): Path {
         val v = try {
-            runPkgSearchVersion("buildah", repository = "FreeBSD-latest")
-        } catch (ex: Exception) {
-            runPkgSearchVersion("buildah", repository = "FreeBSD-release")
+            runPkgSearchVersion("podman", repository = "FreeBSD-latest")
+        } catch (_: Exception) {
+            runPkgSearchVersion("podman", repository = "FreeBSD-release")
         }
-        val binPath = pkgCacheRoot / "usr/local/$v/bin/buildah"
+        val binPath = pkgCacheRoot / "usr/local/$v/bin/podman"
         val pkgs = if (binPath.exists()) {
             emptyList()
         } else {
-            listOf("gpgme", "libgpg-error", "libassuan", "buildah")
+            listOf("gpgme", "libgpg-error", "libassuan", "podman")
         }
         if (pkgs.isNotEmpty()) {
             runPkg(listOf("fetch", "-y", *pkgs.toTypedArray()))
@@ -1028,10 +1028,10 @@ class JPkgPipelineBuilder(
         for (pkg in pkgs) {
             val name = try {
                 runPkgSearchVersion(pkg, repository = "FreeBSD-latest")
-            } catch (ex: Exception) {
+            } catch (_: Exception) {
                 runPkgSearchVersion(pkg, repository = "FreeBSD-release")
             }
-            val include = if (pkg == "buildah") {
+            val include = if (pkg == "podman") {
                 "/usr/local/bin"
             } else {
                 "/usr/local/lib"
@@ -1047,12 +1047,12 @@ class JPkgPipelineBuilder(
         return pkgCacheRoot / "usr/local/$v"
     }
 
-    private fun buildahProcess(
-        buildahHome: Path,
+    private fun podmanProcess(
+        podmanHome: Path,
         vararg arg: String
     ): ProcessBuilder {
-        val p = ProcessBuilder((buildahHome / "bin/buildah").pathString, *arg)
-        p.environment()["LD_LIBRARY_PATH"] = (buildahHome / "lib").pathString
+        val p = ProcessBuilder((podmanHome / "bin/podman").pathString, *arg)
+        p.environment()["LD_LIBRARY_PATH"] = (podmanHome / "lib").pathString
         return p
     }
 

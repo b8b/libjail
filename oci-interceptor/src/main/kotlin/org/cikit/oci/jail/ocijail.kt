@@ -16,6 +16,7 @@ import org.cikit.oci.*
 import java.nio.channels.FileChannel
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
+import java.util.*
 import kotlin.io.path.*
 
 private const val ociJailStateFile = "state.json"
@@ -320,16 +321,20 @@ private class Start : StartCommand() {
         val ociConfigJson = ociConfigFile.readText()
         val ociConfig = json.decodeFromString<OciConfig>(ociConfigJson)
 
-        val hostUuid = buildString {
-            append(containerId.substring(0, 8))
-            append("-")
-            append(containerId.substring(8, 12))
-            append("-")
-            append(containerId.substring(12, 16))
-            append("-")
-            append(containerId.substring(16, 20))
-            append("-")
-            append(containerId.substring(20, 32))
+        val hostUuid = if (containerId.length < 32) {
+            UUID.randomUUID().toString()
+        } else {
+            buildString {
+                append(containerId.substring(0, 8))
+                append("-")
+                append(containerId.substring(8, 12))
+                append("-")
+                append(containerId.substring(12, 16))
+                append("-")
+                append(containerId.substring(16, 20))
+                append("-")
+                append(containerId.substring(20, 32))
+            }
         }
 
         val hostId = with(MessageDigest.getInstance("MD5")) {

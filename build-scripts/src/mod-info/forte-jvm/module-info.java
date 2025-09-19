@@ -5,5 +5,6 @@ module org.cikit.forte {
     exports org.cikit.forte;
     exports org.cikit.forte.core;
     exports org.cikit.forte.emitter;
+    exports org.cikit.forte.eval;
     exports org.cikit.forte.parser;
 }

@@ -59,7 +59,7 @@ import kotlin.system.exitProcess
 
 private val baseDir = Path(".")
 private val targetDir = baseDir / "target"
-private val version = System.getenv("LIBJAIL_VERSION") ?: "0.0.3-dev"
+private val version = System.getenv("LIBJAIL_VERSION") ?: "0.0.4-dev"
 private val os = System.getProperty("os.name").lowercase().let { osName ->
     if (osName == "freebsd") {
         osName + System.getProperty("os.version")

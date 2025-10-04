@@ -77,7 +77,9 @@ fi
 
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/main.kt
 
-///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/jpkg.kt
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/pkgbuild.kt
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/pipeline.kt
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/pkgconfig.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/pkgboot.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/ocijail.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/rcjail.kt

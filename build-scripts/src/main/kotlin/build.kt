@@ -236,7 +236,7 @@ fun main() {
                     "intercept-oci-runtime" to "org.cikit.oci.GenericInterceptor",
                     "intercept-ocijail" to "org.cikit.oci.jail.OciJailInterceptor",
                     "intercept-rcjail" to "org.cikit.oci.jail.RcJailInterceptor",
-                    "jpkg" to "org.cikit.oci.jail.JPkgCommand",
+                    "pkgbuild" to "org.cikit.oci.jail.PkgbuildCommand",
                 )) {
                     append("--launcher $launcher=org.cikit.oci.interceptor/$mainClass ")
                 }

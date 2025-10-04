@@ -4,7 +4,9 @@ import kotlinx.serialization.json.Json
 import org.cikit.libjail.TraceEvent
 import org.cikit.oci.OciLogger
 import java.net.URI
+import java.nio.channels.FileChannel
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 import java.security.KeyFactory
 import java.security.MessageDigest
 import java.security.PublicKey
@@ -29,55 +31,72 @@ fun fetchPkg(
 
     val target = pkgCacheRoot / "var/cache/pkg/pkg.pkg"
     val storeSig = pkgCacheRoot / "var/cache/pkg/pkg.pkg.sig"
+    val lockFile = pkgCacheRoot / "var/cache/pkg/pkg.lck"
 
-    (target.parent)?.let { p ->
+    lockFile.parent?.let { p ->
         if (!p.exists()) {
             p.createDirectories()
         }
     }
 
-    val sigData = URI.create("$baseUri/latest/Latest/pkg.pkg.sig")
-        .also {
-            logger.trace(TraceEvent.Debug("fetching $it"))
-        }
-        .toURL()
-        .openStream().use { it.readBytes() }
-    storeSig.writeBytes(sigData)
-    val sigInfo = parseSigData(sigData, fingerPrints)
-    val sha256 = URI.create("$baseUri/latest/Latest/pkg.pkg")
-        .also {
-            logger.trace(TraceEvent.Debug("fetching $it"))
-        }
-        .toURL()
-        .openStream().use { `in` ->
-            val md = MessageDigest.getInstance("SHA-256")
-            target.outputStream().use { out ->
-                val buffer = ByteArray(1024 * 4)
-                while (true) {
-                    val len = `in`.read(buffer)
-                    if (len < 0) {
-                        break
-                    }
-                    md.update(buffer, 0, len)
-                    out.write(buffer, 0, len)
+    FileChannel.open(
+        lockFile,
+        StandardOpenOption.CREATE,
+        StandardOpenOption.WRITE,
+        StandardOpenOption.DELETE_ON_CLOSE
+    ).use { lockFileHandle ->
+        lockFileHandle.lock().use {
+            (target.parent)?.let { p ->
+                if (!p.exists()) {
+                    p.createDirectories()
                 }
             }
-            md.digest().joinToString("") { "%02x".format(it) }
+
+            val sigData = URI.create("$baseUri/latest/Latest/pkg.pkg.sig")
+                .also {
+                    logger.trace(TraceEvent.Debug("fetching $it"))
+                }
+                .toURL()
+                .openStream().use { it.readBytes() }
+            storeSig.writeBytes(sigData)
+            val sigInfo = parseSigData(sigData, fingerPrints)
+            val sha256 = URI.create("$baseUri/latest/Latest/pkg.pkg")
+                .also {
+                    logger.trace(TraceEvent.Debug("fetching $it"))
+                }
+                .toURL()
+                .openStream().use { `in` ->
+                    val md = MessageDigest.getInstance("SHA-256")
+                    target.outputStream().use { out ->
+                        val buffer = ByteArray(1024 * 4)
+                        while (true) {
+                            val len = `in`.read(buffer)
+                            if (len < 0) {
+                                break
+                            }
+                            md.update(buffer, 0, len)
+                            out.write(buffer, 0, len)
+                        }
+                    }
+                    md.digest().joinToString("") { "%02x".format(it) }
+                }
+            if (!sigInfo.verify(sha256.encodeToByteArray())) {
+                error("failed to verify signature for pkg.pkg")
+            }
+            val tarArgs = listOf(
+                "tar", "-C", pkgCacheRoot.pathString,
+                "-xf", target.pathString,
+                "-s", "|^/||",
+                "/$pkgStaticPath"
+            )
+            logger.trace(TraceEvent.Exec(tarArgs))
+            val rc = ProcessBuilder(tarArgs).inheritIO().start().waitFor()
+            if (rc != 0) {
+                (pkgCacheRoot / pkgStaticPath).deleteIfExists()
+                error("failed to extract pkg.pkg: " +
+                        "tar terminated with exit code $rc")
+            }
         }
-    if (!sigInfo.verify(sha256.encodeToByteArray())) {
-        error("failed to verify signature for pkg.pkg")
-    }
-    val tarArgs = listOf(
-        "tar", "-C", pkgCacheRoot.pathString,
-        "-xf", target.pathString,
-        "-s", "|^/||",
-        "/$pkgStaticPath"
-    )
-    logger.trace(TraceEvent.Exec(tarArgs))
-    val rc = ProcessBuilder(tarArgs).inheritIO().start().waitFor()
-    if (rc != 0) {
-        (pkgCacheRoot / pkgStaticPath).deleteIfExists()
-        error("failed to extract pkg.pkg: tar terminated with exit code $rc")
     }
 }
 
@@ -134,10 +153,10 @@ private class SigData(
     val publicKeySha256Fp: String,
 ) {
     fun verify(input: ByteArray): Boolean {
-        val verifyer = Signature.getInstance("SHA256withRSA")
-        verifyer.initVerify(publicKey)
-        verifyer.update(input)
-        return verifyer.verify(signature)
+        val verifier = Signature.getInstance("SHA256withRSA")
+        verifier.initVerify(publicKey)
+        verifier.update(input)
+        return verifier.verify(signature)
     }
 }
 
@@ -146,7 +165,7 @@ private fun parseSigData(
     fingerPrints: FingerPrints
 ): SigData {
     require(fingerPrints.trusted.isNotEmpty()) {
-        "cannt verify signature: no trusted keys provided"
+        "cannot verify signature: no trusted keys provided"
     }
     val prefix = "SIGNATURE\n"
     require(sigData.decodeToString(0, prefix.length) == prefix) {

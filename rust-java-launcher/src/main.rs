@@ -13,7 +13,7 @@ fn main() {
         Some("intercept-oci-runtime") => "org.cikit.oci.GenericInterceptor",
         Some("intercept-ocijail") => "org.cikit.oci.jail.OciJailInterceptor",
         Some("intercept-rcjail") => "org.cikit.oci.jail.RcJailInterceptor",
-        Some("jpkg") => "org.cikit.oci.jail.JPkgCommand",
+        Some("pkgbuild") => "org.cikit.oci.jail.PkgbuildCommand",
         _ => panic!("Invalid command name"),
     };
 

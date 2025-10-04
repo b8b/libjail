@@ -7,7 +7,7 @@ if [ -e target/libjail ]; then
   exit 1
 fi
 
-./bin/jpkg.sh -P --from scratch --mount .:/src \
+./bin/pkgbuild.sh -P --from scratch --mount .:/src \
   install -y \
       FreeBSD-runtime FreeBSD-caroot FreeBSD-zoneinfo FreeBSD-openssl \
   --then install -y \
@@ -28,23 +28,23 @@ fi
         -XX:AOTMode=record -XX:AOTConfiguration=target/libjail/app.aotconf \
         --enable-native-access=com.github.ajalt.mordant.ffm \
         --enable-native-access=org.cikit.libjail \
-        -m org.cikit.oci.interceptor/org.cikit.oci.jail.JPkgCommand -h
+        -m org.cikit.oci.interceptor/org.cikit.oci.jail.PkgbuildCommand -h
       target/libjail/bin/java \
         -XX:AOTMode=create -XX:AOTConfiguration=target/libjail/app.aotconf \
         -XX:AOTCache=target/libjail/app.aot \
         --enable-native-access=com.github.ajalt.mordant.ffm \
         --enable-native-access=org.cikit.libjail \
-        -m org.cikit.oci.interceptor/org.cikit.oci.jail.JPkgCommand -h
+        -m org.cikit.oci.interceptor/org.cikit.oci.jail.PkgbuildCommand -h
       '
 
 read -r VERSION < target/libjail/VERSION
 
 cp LICENSE target/libjail/
 
-cp rust-java-launcher/target/release/rust-java-launcher target/libjail/bin/jpkg
-ln -f target/libjail/bin/jpkg target/libjail/bin/intercept-oci-runtime
-ln -f target/libjail/bin/jpkg target/libjail/bin/intercept-ocijail
-ln -f target/libjail/bin/jpkg target/libjail/bin/intercept-rcjail
+cp rust-java-launcher/target/release/rust-java-launcher target/libjail/bin/pkgbuild
+ln -f target/libjail/bin/pkgbuild target/libjail/bin/intercept-oci-runtime
+ln -f target/libjail/bin/pkgbuild target/libjail/bin/intercept-ocijail
+ln -f target/libjail/bin/pkgbuild target/libjail/bin/intercept-rcjail
 
 mkdir target/libjail/kld
 cp jail-mntinfo-kmod/jail_mntinfo.ko target/libjail/kld/

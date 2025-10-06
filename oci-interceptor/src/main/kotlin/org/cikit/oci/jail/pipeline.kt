@@ -679,9 +679,11 @@ class PkgbuildPipeline(
                     add("BATCH=yes")
                     add("-C")
                     add(dir)
-                    add("-VPKGNAME")
+                    add("-VPKGNAMEPREFIX")
+                    add("-VPORTNAME")
+                    add("-VPKGNAMESUFFIX")
                 }
-            ).useLines { lines -> lines.last() }
+            ).useLines { lines -> lines.joinToString("") }
             logger.info("'$pkgName' depends on $dir -> '$dependencyName'")
             dependencyName
         }

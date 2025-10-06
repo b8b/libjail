@@ -165,7 +165,7 @@ sysctl_mntinfojson(SYSCTL_HANDLER_ARGS)
         }
 
         if (enforce_statfs > 1) {
-                char *empty = "{\"mounted\":[]}";
+                char *empty = "{\"mounted\":[]}\0";
                 return sysctl_handle_string(oidp, empty, strlen(empty) + 1,
                                             req);
         }

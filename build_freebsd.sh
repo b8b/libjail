@@ -17,9 +17,9 @@ fi
       FreeBSD-clang-dev FreeBSD-clibs-dev FreeBSD-runtime-dev \
       FreeBSD-utilities-dev FreeBSD-libexecinfo-dev \
       FreeBSD-libcompiler_rt-dev FreeBSD-libbsm-dev FreeBSD-openssl-lib-dev \
-      FreeBSD-tcpd-dev openjdk24 rust \
+      FreeBSD-tcpd-dev openjdk25 rust \
   --then run --shell 'set -e
-      export JAVA_HOME=/usr/local/openjdk24
+      export JAVA_HOME=/usr/local/openjdk25
       cd /src/rust-jail-cleanup && cargo build --release --locked
       cd /src/rust-java-launcher && cargo build --release --locked
       cd /src/jail-mntinfo-kmod && make

@@ -10,7 +10,7 @@
 #   |_|\_\___/ \__|_|_|_| |_| |___/\___|_|  |_| .__/ \__|
 #                         ______              | |
 #                        |______|             |_|
-v=2.2.10.29
+v=2.2.21.32
 p=org/cikit/kotlin_script/"$v"/kotlin_script-"$v".sh
 url="${M2_CENTRAL_REPO:=https://repo1.maven.org/maven2}"/"$p"
 kotlin_script_sh="${M2_LOCAL_REPO:-"$HOME"/.m2/repository}"/"$p"
@@ -25,7 +25,7 @@ if ! [ -r "$kotlin_script_sh" ]; then
   fi
   dgst_cmd="$(command -v openssl) dgst -sha256 -r" || dgst_cmd=sha256sum
   case "$($dgst_cmd < "$kotlin_script_sh")" in
-  "f7710c773e7b67c75fa842986d1abede08396b92c3d30b55caaacf600200d923 "*) ;;
+  "ad53c905302b3247059729f3ff4762727a0c52b903d66241acc277c60d427e94 "*) ;;
   *) echo "error: failed to verify kotlin_script.sh" >&2
      rm -f "$kotlin_script_sh"; exit 1;;
   esac
@@ -33,7 +33,7 @@ fi
 . "$kotlin_script_sh"; exit 2
 */
 
-///DEP=org.cikit:kotlin_script:2.2.10.29
+///DEP=org.cikit:kotlin_script:2.2.21.32
 
 ///DEP=com.github.ajalt.mordant:mordant-jvm:3.0.2
 ///DEP=com.github.ajalt.mordant:mordant-core-jvm:3.0.2

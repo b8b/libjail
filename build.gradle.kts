@@ -12,13 +12,13 @@ allprojects {
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(24)
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
 tasks.register<Exec>("build_freebsd") {
     val javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(24)
+        languageVersion = JavaLanguageVersion.of(25)
     }.get()
     environment(
         "java_cmd",
@@ -32,7 +32,7 @@ tasks.register<Exec>("build_freebsd") {
 
 tasks.register<Exec>("build_generic") {
     val javaLauncher = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(24)
+        languageVersion = JavaLanguageVersion.of(25)
     }.get()
     environment(
         "java_cmd",

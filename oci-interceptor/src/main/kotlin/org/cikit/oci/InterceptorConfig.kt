@@ -49,7 +49,6 @@ data class PostHookConfig(
 
 @Serializable
 data class Hooks(
-    @SerialName("templates_dir")
     val templatesDir: List<UPath> = emptyList(),
     val precreate: List<PreHookConfig> = emptyList(),
     val postcreate: List<PostHookConfig> = emptyList(),
@@ -64,6 +63,41 @@ data class Hooks(
 )
 
 @Serializable
+data class CniConfig(
+    val templatesDir: List<UPath> = emptyList(),
+    val plugin: List<CniPluginConfig> = emptyList(),
+)
+
+@Serializable
+data class CniPluginConfig(
+    val type: String,
+    val defaultCommand: List<String> = listOf("/bin/sh", "-s", "--"),
+    val delegate: DelegationMode = DelegationMode.NONE,
+    val delegateCommand: List<String>? = null,
+    val prepare: UPath? = null,
+    val prepareCommand: List<String>? = null,
+    val setup: UPath? = null,
+    val setupCommand: List<String>? = null,
+    val prepareCheck: UPath? = null,
+    val prepareCheckCommand: List<String>? = null,
+    val check: UPath? = null,
+    val checkCommand: List<String>? = null,
+    val prepareDelete: UPath? = null,
+    val prepareDeleteCommand: List<String>? = null,
+    val delete: UPath? = null,
+    val deleteCommand: List<String>? = null,
+    val timeout: Long = 30,
+    val enabled: Boolean = true,
+) {
+    @Serializable
+    enum class DelegationMode {
+        NONE,
+        IPAM,
+        CNI
+    }
+}
+
+@Serializable
 data class Interceptor(
     @SerialName("override_log")
     val overrideLog: String? = null,
@@ -76,7 +110,8 @@ data class Interceptor(
 @Serializable
 data class InterceptorConfig(
     val interceptor: Interceptor = Interceptor(),
-    val hooks: Hooks = Hooks()
+    val hooks: Hooks = Hooks(),
+    val cni: CniConfig = CniConfig(),
 )
 
 class UPathSerializer : KSerializer<UPath> {

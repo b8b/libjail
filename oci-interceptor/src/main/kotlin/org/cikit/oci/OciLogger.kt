@@ -15,7 +15,8 @@ import kotlin.io.path.exists
 class OciLogger(
     logFile: String?,
     logFormat: String?,
-    logLevel: String?
+    logLevel: String?,
+    disableConsole: Boolean = false
 ) {
     var logFile: String? = logFile
         private set
@@ -27,7 +28,7 @@ class OciLogger(
     private object Lock
 
     private var w: BufferedWriter? = null
-    private var logToConsole = logFile == null
+    private var logToConsole = !disableConsole && logFile == null
 
     private val shutdownHook = thread(start = false) {
         w?.close()

@@ -1,6 +1,8 @@
 module org.cikit.forte {
     requires kotlinx.coroutines.core;
     requires kotlinx.io.bytestring;
+    requires kotlinx.serialization.core;
+    requires kotlinx.serialization.json;
 
     exports org.cikit.forte;
     exports org.cikit.forte.core;

@@ -77,6 +77,10 @@ fi
 
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/main.kt
 
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/cni/add.kt
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/cni/error.kt
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/cni/version.kt
+
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/pkgbuild.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/pipeline.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/jail/pkgconfig.kt
@@ -90,6 +94,8 @@ fi
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/OciConfig.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/OciLogger.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/OciRuntimeCommand.kt
+
+///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/CniPluginCommand.kt
 
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/CreateCommand.kt
 ///INC=../oci-interceptor/src/main/kotlin/org/cikit/oci/DeleteCommand.kt

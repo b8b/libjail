@@ -14,6 +14,7 @@ fn main() {
         Some("intercept-ocijail") => "org.cikit.oci.jail.OciJailInterceptor",
         Some("intercept-rcjail") => "org.cikit.oci.jail.RcJailInterceptor",
         Some("pkgbuild") => "org.cikit.oci.jail.PkgbuildCommand",
+        Some("cni-plugin") => "org.cikit.oci.CniPluginCommand",
         _ => panic!("Invalid command name"),
     };
 

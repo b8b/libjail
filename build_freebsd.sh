@@ -45,6 +45,7 @@ cp rust-java-launcher/target/release/rust-java-launcher target/libjail/bin/pkgbu
 ln -f target/libjail/bin/pkgbuild target/libjail/bin/intercept-oci-runtime
 ln -f target/libjail/bin/pkgbuild target/libjail/bin/intercept-ocijail
 ln -f target/libjail/bin/pkgbuild target/libjail/bin/intercept-rcjail
+ln -f target/libjail/bin/pkgbuild target/libjail/bin/cni-plugin
 
 mkdir target/libjail/kld
 cp jail-mntinfo-kmod/jail_mntinfo.ko target/libjail/kld/

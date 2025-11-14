@@ -271,11 +271,15 @@ open class GenericInterceptor(
 
     private fun JsonElement.toAny(): Any? = when (this) {
         is JsonNull -> null
-        is JsonPrimitive -> booleanOrNull
-            ?: intOrNull
-            ?: longOrNull
-            ?: doubleOrNull
-            ?: contentOrNull
+        is JsonPrimitive -> if (isString) {
+            contentOrNull
+        } else {
+            booleanOrNull
+                ?: intOrNull
+                ?: longOrNull
+                ?: doubleOrNull
+                ?: contentOrNull
+        }
         is JsonArray -> map { it.toAny() }
         is JsonObject -> entries.associate { (k, v) -> k to v.toAny() }
     }
@@ -326,8 +330,10 @@ open class GenericInterceptor(
                 path.toNioPath().takeIf { it.exists() }
             } else {
                 search
-                    .lastOrNull { d -> d.append(path).toNioPath().exists() }
-                    ?.append(path)?.toNioPath()
+                    .lastOrNull { d ->
+                        d.appendSegments(path).toNioPath().exists()
+                    }
+                    ?.appendSegments(path)?.toNioPath()
             }
             if (fullPath == null) {
                 logger.warn("failed to load template '$path': " +

@@ -11,6 +11,7 @@ fun main(args: Array<String>) {
         "pkgbuild" -> PkgbuildCommand()
         "ocijail" -> OciJailInterceptor()
         "rcjail" -> RcJailInterceptor()
+        "cni" -> CniPluginCommand()
         else -> GenericInterceptor()
     }
     main.main(args)

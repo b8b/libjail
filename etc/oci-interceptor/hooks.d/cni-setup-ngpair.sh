@@ -1,29 +1,24 @@
 set -e
 
-#+ mkpeer . eiface ether ether
-#+ show .
-#  Name: ngctl84495      Type: socket          ID: 00000090   Num hooks: 1
-#  Local hook      Peer name       Peer type    Peer ID         Peer hook
-#  ----------      ---------       ---------    -------         ---------
-#  ether           ngeth10         eiface       00000091        ether
-
 create_eiface()
 {
-  local ngout="$(
-ngctl -f - << __EOF__
-mkpeer . eiface ether ether
-show .
+  local name=""
+  set -- $(ngctl -f - << __EOF__
+mkpeer . eiface new_eiface ether
+show -n .:new_eiface
 __EOF__
-)"
-  local field
-  for field in $ngout; do
-    case "$field" in
-    ngeth[0-9]*)
-      echo "$field"
+)
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    [Nn][Aa][Mm][Ee]:)
+      shift
+      name="$1"
       break
       ;;
     esac
+    shift
   done
+  echo "$name"
 }
 
 iface_a="$(create_eiface)"

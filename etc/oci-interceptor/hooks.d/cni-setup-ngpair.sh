@@ -21,13 +21,18 @@ __EOF__
   echo "$name"
 }
 
-iface_a="$(create_eiface)"
-trap 'ngctl shutdown "$iface_a":' EXIT
+if ! iface_a="$(create_eiface)"; then
+  if ! kldstat -qm ng_eiface; then
+    kldload ng_eiface
+    iface_a="$(create_eiface)"
+  fi
+fi
+trap "ngctl shutdown ${iface_a}:" EXIT
 
 echo "created $iface_a" >&2
 
 iface_b="$(create_eiface)"
-trap 'ngctl shutdown "$iface_a":; ngctl shutdown "$iface_b":' EXIT
+trap "ngctl shutdown ${iface_a}: || true; ngctl shutdown ${iface_b}:" EXIT
 
 echo "created $iface_b" >&2
 
@@ -37,11 +42,11 @@ ngctl connect "$iface_a": "$iface_b": ether ether
 
 ifconfig "$iface_a" up description "associated with jail: {{ env.CNI_CONTAINERID }}"
 
-ifconfig "$iface_b" vnet "{{ env.CNI_CONTAINERID }}"
-ifconfig -j "{{ env.CNI_CONTAINERID }}" "$iface_b" name "{{ env.CNI_IFNAME }}" > /dev/null
+ifconfig "$iface_b" vnet '{{ env.CNI_CONTAINERID }}'
+ifconfig -j '{{ env.CNI_CONTAINERID }}' "$iface_b" name '{{ env.CNI_IFNAME }}' > /dev/null
 
 {% if cniConfig.bridge is defined %}
-  ifconfig "{{ cniConfig.bridge }}" addm "$iface_a"
+  ifconfig '{{ cniConfig.bridge }}' addm "$iface_a"
 {% endif %}
 
 trap '' EXIT

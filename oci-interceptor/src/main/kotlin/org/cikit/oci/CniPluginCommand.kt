@@ -154,15 +154,18 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                     json.encodeToString(VersionResult())
                 }
                 "ADD" -> {
-                    val result = runSetup(config.cni.plugin)
+                    val result = runSetup(
+                        config.cni.plugin,
+                        CniPluginConfig.Setup
+                    )
                     json.encodeToString(result)
                 }
                 "DEL" -> {
-                    runPlugins(config.cni.plugin, Phase.Delete)
+                    runPlugins(config.cni.plugin, CniPluginConfig.Delete)
                     null
                 }
                 "CHECK" -> {
-                    runPlugins(config.cni.plugin, Phase.Check)
+                    runPlugins(config.cni.plugin, CniPluginConfig.Check)
                     null
                 }
                 "STATUS" -> {
@@ -205,7 +208,10 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         }
     }
 
-    private fun runSetup(plugins: List<CniPluginConfig>): JsonObject {
+    private fun runSetup(
+        plugins: List<CniPluginConfig>,
+        phase: CniPhase
+    ): JsonObject {
         val ifName = cniIfName
         require(ifName != null) {
             "CNI_IFNAME environment variable not set"
@@ -231,10 +237,10 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         }
 
         for (plugin in enabledPlugins) {
-            val prepareScript = plugin.prepare?.let {
+            val prepareScript = phase.prepare(plugin)?.let {
                 renderTemplate(it, vars) ?: continue
             }
-            val prepareCommand = plugin.prepareCommand
+            val prepareCommand = phase.prepareCommand(plugin)
                 ?.let { renderCommand(it, vars) }
                 ?: prepareScript?.let { plugin.defaultCommand }
             if (prepareCommand != null) {
@@ -286,10 +292,10 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                 haveFullResult = haveFullResult ||
                         plugin.delegate == CniPluginConfig.DelegationMode.CNI
             }
-            val setupScript = plugin.setup?.let {
+            val setupScript = phase.main(plugin)?.let {
                 renderTemplate(it, vars) ?: continue
             }
-            val setupCommand = plugin.setupCommand
+            val setupCommand = phase.mainCommand(plugin)
                 ?.let { renderCommand(it, vars) }
                 ?: setupScript?.let { plugin.defaultCommand }
             if (setupCommand != null) {
@@ -329,56 +335,9 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         return json.encodeToJsonElement(simpleResult) as JsonObject
     }
 
-    private sealed interface Phase {
-        fun prepare(plugin: CniPluginConfig): UPath?
-        fun prepareCommand(plugin: CniPluginConfig): List<String>?
-        fun main(plugin: CniPluginConfig): UPath?
-        fun mainCommand(plugin: CniPluginConfig): List<String>?
-
-        object Delete : Phase {
-            override fun prepare(plugin: CniPluginConfig): UPath? {
-                return plugin.prepareDelete
-            }
-
-            override fun prepareCommand(
-                plugin: CniPluginConfig
-            ): List<String>? {
-                return plugin.prepareDeleteCommand
-            }
-
-            override fun main(plugin: CniPluginConfig): UPath? {
-                return plugin.delete
-            }
-
-            override fun mainCommand(plugin: CniPluginConfig): List<String>? {
-                return plugin.deleteCommand
-            }
-        }
-
-        object Check : Phase {
-            override fun prepare(plugin: CniPluginConfig): UPath? {
-                return plugin.prepareCheck
-            }
-
-            override fun prepareCommand(
-                plugin: CniPluginConfig
-            ): List<String>? {
-                return plugin.prepareCheckCommand
-            }
-
-            override fun main(plugin: CniPluginConfig): UPath? {
-                return plugin.check
-            }
-
-            override fun mainCommand(plugin: CniPluginConfig): List<String>? {
-                return plugin.checkCommand
-            }
-        }
-    }
-
     private fun runPlugins(
         plugins: List<CniPluginConfig>,
-        phase: Phase
+        phase: CniPhase
     ) {
         val netConfig = readStdin()
         val version = readVersion(netConfig)

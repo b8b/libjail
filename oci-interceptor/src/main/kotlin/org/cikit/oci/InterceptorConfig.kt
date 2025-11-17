@@ -68,24 +68,31 @@ data class CniConfig(
     val plugin: List<CniPluginConfig> = emptyList(),
 )
 
+sealed interface CniPhase {
+    val prepare: KProperty1<CniPluginConfig, UPath?>
+    val prepareCommand: KProperty1<CniPluginConfig, List<String>?>
+    val main: KProperty1<CniPluginConfig, UPath?>
+    val mainCommand: KProperty1<CniPluginConfig, List<String>?>
+}
+
 @Serializable
 data class CniPluginConfig(
     val type: String,
     val defaultCommand: List<String> = listOf("/bin/sh", "-s", "--"),
     val delegate: DelegationMode = DelegationMode.NONE,
     val delegateCommand: List<String>? = null,
-    val prepare: UPath? = null,
-    val prepareCommand: List<String>? = null,
-    val setup: UPath? = null,
-    val setupCommand: List<String>? = null,
-    val prepareCheck: UPath? = null,
-    val prepareCheckCommand: List<String>? = null,
-    val check: UPath? = null,
-    val checkCommand: List<String>? = null,
-    val prepareDelete: UPath? = null,
-    val prepareDeleteCommand: List<String>? = null,
-    val delete: UPath? = null,
-    val deleteCommand: List<String>? = null,
+    private val prepare: UPath? = null,
+    private val prepareCommand: List<String>? = null,
+    private val setup: UPath? = null,
+    private val setupCommand: List<String>? = null,
+    private val prepareCheck: UPath? = null,
+    private val prepareCheckCommand: List<String>? = null,
+    private val check: UPath? = null,
+    private val checkCommand: List<String>? = null,
+    private val prepareDelete: UPath? = null,
+    private val prepareDeleteCommand: List<String>? = null,
+    private val delete: UPath? = null,
+    private val deleteCommand: List<String>? = null,
     val timeout: Long = 30,
     val enabled: Boolean = true,
 ) {
@@ -94,6 +101,39 @@ data class CniPluginConfig(
         NONE,
         IPAM,
         CNI
+    }
+
+    object Setup : CniPhase {
+        override val prepare: KProperty1<CniPluginConfig, UPath?>
+            get() = CniPluginConfig::prepare
+        override val prepareCommand: KProperty1<CniPluginConfig, List<String>?>
+            get() = CniPluginConfig::prepareCommand
+        override val main: KProperty1<CniPluginConfig, UPath?>
+            get() = CniPluginConfig::setup
+        override val mainCommand: KProperty1<CniPluginConfig, List<String>?>
+            get() = CniPluginConfig::setupCommand
+    }
+
+    object Check : CniPhase {
+        override val prepare: KProperty1<CniPluginConfig, UPath?>
+            get() = CniPluginConfig::prepareCheck
+        override val prepareCommand: KProperty1<CniPluginConfig, List<String>?>
+            get() = CniPluginConfig::prepareCheckCommand
+        override val main: KProperty1<CniPluginConfig, UPath?>
+            get() = CniPluginConfig::check
+        override val mainCommand: KProperty1<CniPluginConfig, List<String>?>
+            get() = CniPluginConfig::checkCommand
+    }
+
+    object Delete : CniPhase {
+        override val prepare: KProperty1<CniPluginConfig, UPath?>
+            get() = CniPluginConfig::prepareDelete
+        override val prepareCommand: KProperty1<CniPluginConfig, List<String>?>
+            get() = CniPluginConfig::prepareDeleteCommand
+        override val main: KProperty1<CniPluginConfig, UPath?>
+            get() = CniPluginConfig::delete
+        override val mainCommand: KProperty1<CniPluginConfig, List<String>?>
+            get() = CniPluginConfig::deleteCommand
     }
 }
 

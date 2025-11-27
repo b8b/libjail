@@ -1,6 +1,7 @@
 module org.cikit.oci.interceptor {
     requires kotlinx.coroutines.core;
     requires net.vieiro.toml;
+    requires inet.ipaddr;
 
     requires transitive kotlin.stdlib;
     requires transitive kotlinx.serialization.core;

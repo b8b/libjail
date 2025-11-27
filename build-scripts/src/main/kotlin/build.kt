@@ -59,7 +59,7 @@ import kotlin.system.exitProcess
 
 private val baseDir = Path(".")
 private val targetDir = baseDir / "target"
-private val version = System.getenv("LIBJAIL_VERSION") ?: "0.0.4-dev"
+private val version = System.getenv("LIBJAIL_VERSION") ?: "0.0.5-dev"
 private val os = System.getProperty("os.name").lowercase().let { osName ->
     if (osName == "freebsd") {
         osName + System.getProperty("os.version")
@@ -161,6 +161,7 @@ fun main() {
         "kotlinx-serialization-json-jvm" to "kotlinx.serialization.json",
         "kotlinx-datetime-jvm" to "kotlinx.datetime",
         "kotlinx-io-bytestring-jvm" to "kotlinx.io.bytestring",
+        "ipaddress" to "inet.ipaddr"
     )
 
     val modulePath = mutableListOf<Path>()

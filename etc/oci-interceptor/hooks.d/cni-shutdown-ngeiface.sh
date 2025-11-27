@@ -2,19 +2,19 @@ driver_name="$(ifconfig -D -j '{{ env.CNI_CONTAINERID }}' '{{ env.CNI_IFNAME }}'
 driver_name="${driver_name##*drivername:[[:space:]]}"
 driver_name="${driver_name%%[[:space:]]*}"
 
-shutdown_eiface()
+shutdown_peer()
 {
   local path="$1"
   local out
-  local name=""
+  local id=""
   local type=""
   if out="$(ngctl show -n "$path")"; then
     set -- $out
     while [ "$#" -gt 0 ]; do
       case "$1" in
-      [Nn][Aa][Mm][Ee]:)
+      [Ii][Dd]:)
         shift
-        name="$1"
+        id="$1"
         ;;
       [Tt][Yy][Pp][Ee]:)
         shift
@@ -24,12 +24,14 @@ shutdown_eiface()
       shift
     done
   fi
-  if [ "$type" = "eiface" ]; then
-    ngctl shutdown "$path"
-  fi
+  case "$type" in
+  eiface | bpf)
+    ngctl shutdown "[$id]:"
+    ;;
+  esac
 }
 
-shutdown_eiface "$driver_name":ether
+shutdown_peer "$driver_name":ether
 ngctl shutdown "$driver_name":
 
 exit 0

@@ -65,6 +65,8 @@ fi
 ///DEP=org.cikit:forte-jvm:0.6.2
 ///DEP=org.jetbrains.kotlinx:kotlinx-io-bytestring-jvm:0.8.0
 
+///DEP=com.github.seancfoley:ipaddress:5.5.1
+
 ///DEP=com.github.ajalt.clikt:clikt-jvm:5.0.3
 ///DEP=com.github.ajalt.clikt:clikt-core-jvm:5.0.3
 ///DEP=com.github.ajalt.mordant:mordant-jvm:3.0.2

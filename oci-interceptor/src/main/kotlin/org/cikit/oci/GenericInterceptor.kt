@@ -325,6 +325,7 @@ open class GenericInterceptor(
             "preempt" to hook.preempt,
         )
         val script = hook.template?.let { path ->
+            logger.info("rendering $path")
             val search = config.hooks.templatesDir
             val fullPath = if (path.isAbsolute) {
                 path.toNioPath().takeIf { it.exists() }

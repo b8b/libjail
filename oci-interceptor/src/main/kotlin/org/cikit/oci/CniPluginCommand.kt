@@ -22,7 +22,11 @@ import java.io.File
 import java.io.IOException
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.nio.channels.Channels
+import java.nio.channels.FileChannel
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
+import kotlin.collections.set
 import kotlin.io.path.*
 import kotlin.system.exitProcess
 
@@ -136,7 +140,8 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
             "command" to cniCommand.uppercase(),
             "containerId" to cniContainerId,
             "cniArgs" to parseArgs(),
-            "env" to rebuildEnv()
+            "env" to rebuildEnv(),
+            "logLevel" to logger.logLevel
         )
     }
 
@@ -221,29 +226,33 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         val type = readType(netConfig)
         val enabledPlugins = plugins.filter { it.enabled && it.type == type }
         var prevResult = readPrevResult(netConfig)
-        var haveFullResult = prevResult != null
         if (!localStateDir.exists()) {
             localStateDir.createDirectories()
         }
+        val setupResultFile =
+            localStateDir / "${cniContainerId}-${cniIfName}.cni"
+        var sanitizeResult = false
 
         val vars = vars.toMutableMap()
-        vars["cniStateFile"] = "${cniContainerId}-${cniIfName}.cni"
         vars["cniConfig"] = netConfig.toAny()
         vars["cniVersion"] = version
         vars["cniType"] = type
-        vars["ipConfig"] = prevResult?.let {
-            val ipc = json.decodeFromJsonElement<AddResult>(it).toIPConfig()
+        vars["ifConfig"] = prevResult?.let {
+            val ipc = json.decodeFromJsonElement<AddResult>(it)
+                .toIFConfig(netConfig)
             json.encodeToJsonElement(ipc).toAny()
         }
 
         for (plugin in enabledPlugins) {
             val prepareScript = phase.prepare(plugin)?.let {
+                logger.info("rendering prepare script: $it")
                 renderTemplate(it, vars) ?: continue
             }
             val prepareCommand = phase.prepareCommand(plugin)
                 ?.let { renderCommand(it, vars) }
                 ?: prepareScript?.let { plugin.defaultCommand }
             if (prepareCommand != null) {
+                logger.info("running prepare command: $prepareCommand")
                 runScript(
                     args = prepareCommand,
                     script = prepareScript,
@@ -267,6 +276,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                 }
             }
             if (delegateCommand != null) {
+                logger.info("running ${plugin.delegate}: $delegateCommand")
                 val output = runCniPlugin(
                     args = delegateCommand,
                     netConfig = netConfig,
@@ -277,9 +287,9 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                 logger.info(
                     "loaded result: " + Json.encodeToString(delegateResult)
                 )
-                val ipConfig = json
+                val ifConfig = json
                     .decodeFromJsonElement<AddResult>(delegateResult)
-                    .toIPConfig()
+                    .toIFConfig(netConfig)
                 val newCniConfig = buildJsonObject {
                     for ((k, v) in netConfig) {
                         put(k, v)
@@ -287,52 +297,133 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                     put("prevResult", delegateResult)
                 }
                 vars["cniConfig"] = newCniConfig.toAny()
-                vars["ipConfig"] = json.encodeToJsonElement(ipConfig).toAny()
+                vars["ifConfig"] = json.encodeToJsonElement(ifConfig).toAny()
                 prevResult = delegateResult
-                haveFullResult = haveFullResult ||
-                        plugin.delegate == CniPluginConfig.DelegationMode.CNI
+                if (plugin.delegate == CniPluginConfig.DelegationMode.IPAM) {
+                    // cni plugin must deliver a full result
+                    sanitizeResult = true
+                }
             }
+            val setupVars = vars + mapOf(
+                "setupResultFile" to setupResultFile.name
+            )
             val setupScript = phase.main(plugin)?.let {
-                renderTemplate(it, vars) ?: continue
+                logger.info("rendering setup script: $it")
+                renderTemplate(it, setupVars) ?: continue
             }
             val setupCommand = phase.mainCommand(plugin)
-                ?.let { renderCommand(it, vars) }
+                ?.let { renderCommand(it, setupVars) }
                 ?: setupScript?.let { plugin.defaultCommand }
             if (setupCommand != null) {
-                runScript(
-                    args = setupCommand,
-                    script = setupScript,
-                    workDir = localStateDir,
-                    timeout = plugin.timeout
-                )
+                logger.info("running setup script: $setupCommand")
+                val setupResult: JsonObject? = FileChannel.open(
+                    setupResultFile,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.DELETE_ON_CLOSE,
+                    StandardOpenOption.READ,
+                    StandardOpenOption.WRITE
+                ).use { fc ->
+                    fc.lock().use { lock ->
+                        require(lock.isValid) {
+                            "error locking $setupResultFile"
+                        }
+                        prevResult?.let {
+                            val ifConfig = json
+                                .decodeFromJsonElement<AddResult>(it)
+                                .toIFConfig(netConfig)
+                            val ifConfigEncoded = Json.encodeToString(ifConfig)
+                            val outputStream = Channels.newOutputStream(fc)
+                            outputStream.write(
+                                ifConfigEncoded.encodeToByteArray()
+                            )
+                            outputStream.write("\n".encodeToByteArray())
+                            outputStream.flush()
+                        }
+                        runScript(
+                            args = setupCommand,
+                            script = setupScript,
+                            workDir = localStateDir,
+                            timeout = plugin.timeout
+                        )
+                        fc.position(0L)
+                        val inputStream = Channels.newInputStream(fc)
+                        val lines = inputStream.bufferedReader().lineSequence()
+                            .map { Json.decodeFromString<JsonObject>(it) }
+                            .iterator()
+                        if (lines.hasNext()) {
+                            var finalResult: IFConfig = IFConfig
+                                .decodeFromJsonElement(lines.next())
+                            while (lines.hasNext()) {
+                                finalResult = finalResult.merge(lines.next())
+                            }
+                            json.encodeToJsonElement(finalResult.toAddResult())
+                                .jsonObject
+                        } else {
+                            null
+                        }
+                    }
+                }
+                if (setupResult != null) {
+                    logger.info(
+                        "loaded result: " + Json.encodeToString(setupResult)
+                    )
+                    prevResult = setupResult
+                    sanitizeResult = true
+                }
             }
         }
 
         val result: AddResult? = prevResult?.let {
-            if (haveFullResult) {
+            if (!sanitizeResult) {
                 return it
             }
             json.decodeFromJsonElement(it)
         }
 
-        val simpleResult = AddResult(
-            cniVersion = version,
-            interfaces = listOf(
-                AddResult.Interface(
+        logger.info("sanitizing result")
+
+        var containerIfIndex: UInt? = null
+        val interfaces = mutableListOf<AddResult.Interface>()
+
+        result?.interfaces?.forEachIndexed { index, `interface` ->
+            if (`interface`.name == ifName) {
+                containerIfIndex = index.toUInt()
+                interfaces += AddResult.Interface(
                     name = ifName,
-                    mac = "00:00:00:00:00:00",
-                    mtu = 1500u,
+                    mac = `interface`.mac ?: "00:00:00:00:00:00",
+                    mtu = `interface`.mtu ?: 1500u,
                     sandbox = cniContainerId
                 )
-            ),
+            } else {
+                interfaces += `interface`.copy(
+                    mac = `interface`.mac ?: "00:00:00:00:00:00",
+                    mtu = `interface`.mtu ?: 1500u
+                )
+            }
+        }
+
+        if (containerIfIndex == null) {
+            containerIfIndex = 0u
+            interfaces += AddResult.Interface(
+                name = ifName,
+                mac = "00:00:00:00:00:00",
+                mtu = 1500u,
+                sandbox = cniContainerId
+            )
+        }
+
+        val sanitizedResult = AddResult(
+            cniVersion = version,
+            interfaces = interfaces.toList(),
             ips = result?.ips?.map { ip ->
-                ip.copy(`interface` = 0u)
+                ip.copy(`interface` = containerIfIndex)
             } ?: emptyList(),
             routes = result?.routes ?: emptyList(),
             dns = result?.dns ?: AddResult.Dns()
         )
 
-        return json.encodeToJsonElement(simpleResult) as JsonObject
+        return json.encodeToJsonElement(sanitizedResult) as JsonObject
     }
 
     private fun runPlugins(
@@ -349,23 +440,25 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         }
 
         val vars = vars.toMutableMap()
-        vars["cniStateFile"] = "${cniContainerId}-${cniIfName}.cni"
         vars["cniConfig"] = netConfig.toAny()
         vars["cniVersion"] = version
         vars["cniType"] = type
-        vars["ipConfig"] = prevResult?.let {
-            val ipc = json.decodeFromJsonElement<AddResult>(it).toIPConfig()
+        vars["ifConfig"] = prevResult?.let {
+            val ipc = json.decodeFromJsonElement<AddResult>(it)
+                .toIFConfig(netConfig)
             json.encodeToJsonElement(ipc).toAny()
         }
 
         for (plugin in enabledPlugins) {
             val prepareScript = phase.prepare(plugin)?.let {
+                logger.info("rendering prepare $phase script: $it")
                 renderTemplate(it, vars) ?: continue
             }
             val prepareCommand = phase.prepareCommand(plugin)
                 ?.let { renderCommand(it, vars) }
                 ?: prepareScript?.let { plugin.defaultCommand }
             if (prepareCommand != null) {
+                logger.info("running prepare $phase script: $prepareCommand")
                 runScript(
                     args = prepareCommand,
                     script = prepareScript,
@@ -383,7 +476,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                         ?: listOf(resolveIpamPlugin(netConfig))
                 }
                 CniPluginConfig.DelegationMode.CNI -> {
-                    //TODO
+                    //TODO implement mechanism against recursive reinvocation
                     plugin.delegateCommand
                         ?.let { renderCommand(it, vars, true) }
                         ?: listOf(resolveCniPlugin(type))
@@ -397,6 +490,9 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                 }
             }
             if (delegateCommand != null) {
+                logger.info(
+                    "running ${plugin.delegate} $phase: $delegateCommand"
+                )
                 runCniPlugin(
                     args = delegateCommand,
                     netConfig = netConfig,
@@ -406,12 +502,14 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                 )
             }
             val mainScript = phase.main(plugin)?.let {
+                logger.info("rendering $phase script: $it")
                 renderTemplate(it, vars) ?: continue
             }
             val mainCommand = phase.mainCommand(plugin)
                 ?.let { renderCommand(it, vars) }
                 ?: mainScript?.let { plugin.defaultCommand }
             if (mainCommand != null) {
+                logger.info("running $phase script: $mainCommand")
                 runScript(
                     args = mainCommand,
                     script = mainScript,
@@ -760,50 +858,6 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         is JsonArray -> map { it.toAny() }
         is JsonObject -> entries.associate { (k, v) -> k to v.toAny() }
     }
-
-    /* private fun mergeResult(left: JsonObject, right: JsonObject): JsonObject {
-        val emitted = mutableSetOf<String>()
-        return buildJsonObject {
-            for ((k, leftValue) in left) {
-                val rightValue = right[k]
-                if (rightValue != null) {
-                    put(k, mergeResultValue(leftValue, rightValue))
-                } else {
-                    put(k, leftValue)
-                }
-                emitted += k
-            }
-            for ((k, rightValue) in right) {
-                if (k !in emitted) {
-                    put(k, rightValue)
-                }
-            }
-        }
-    }
-
-    private fun mergeResultValue(
-        left: JsonElement,
-        right: JsonElement
-    ): JsonElement {
-        return when (left) {
-            is JsonObject -> when (right) {
-                is JsonObject -> mergeResult(left, right)
-                else -> right
-            }
-            is JsonArray -> when (right) {
-                is JsonArray -> buildJsonArray {
-                    for (item in left) {
-                        add(item)
-                    }
-                    for (item in right) {
-                        add(item)
-                    }
-                }
-                else -> right
-            }
-            else -> right
-        }
-    } */
 
     companion object {
         @JvmStatic

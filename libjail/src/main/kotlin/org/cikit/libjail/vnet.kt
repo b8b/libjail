@@ -66,3 +66,15 @@ suspend fun readNetifParameters(
 suspend fun destroyNetif(jail: JailParameters, name: String) {
     pRead(listOf("ifconfig", "-j", jail.name, name, "destroy"))
 }
+
+suspend fun downNetif(jail: JailParameters, name: String) {
+    pRead(listOf("ifconfig", "-j", jail.name, name, "down"))
+}
+
+suspend fun renameNetif(
+    jail: JailParameters,
+    name: String,
+    newName: String
+) {
+    pRead(listOf("ifconfig", "-j", jail.name, name, "name", newName))
+}

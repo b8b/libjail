@@ -184,6 +184,35 @@ private suspend fun cleanupInterfaces(jail: JailParameters): Int {
             rcAll = 1
         }
     }
+    // rename and down network interfaces that were not destroyed to avoid
+    // offensive network interfaces entering the parent jail
+    var counter = 1
+    for (netIf in readNetifParameters(jail)) {
+        val newName = "rip${jail.jid}.$counter"
+        counter++
+        try {
+            downNetif(jail, netIf.name)
+        } catch (ex: Throwable) {
+            trace(
+                TraceEvent.Warn(
+                    "failed to down network interface \"${netIf.name}\"",
+                    ex
+                )
+            )
+            rcAll = 1
+        }
+        try {
+            renameNetif(jail, netIf.name, newName)
+        } catch (ex: Throwable) {
+            trace(
+                TraceEvent.Warn(
+                    "failed to rename network interface \"${netIf.name}\"",
+                    ex
+                )
+            )
+            rcAll = 1
+        }
+    }
     return rcAll
 }
 

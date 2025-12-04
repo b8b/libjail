@@ -269,34 +269,70 @@ data class IFConfig(
         return json.decodeFromJsonElement(merged)
     }
 
-    fun toAddResult(): AddResult = AddResult(
-        interfaces = interfaces,
-        ips = ips.map { ip ->
-            AddResult.Ip(
-                address = "${ip.address}/${ip.prefixLen}",
-                version = when (ip.ipVersion) {
-                    IPAddress.IPVersion.IPV4 -> "4"
-                    IPAddress.IPVersion.IPV6 -> "6"
-                },
-                gateway = ip.gateway?.toString(),
-                `interface` = ip.ifName?.let { ifName ->
-                    interfaces.indexOfFirst { it.name == ifName }.toUInt()
+    fun toAddResult(
+        version: String,
+        cniIfName: String,
+        cniContainerId: String
+    ): AddResult {
+        val finalInterfaces = buildList {
+            var haveContainerIf = false
+            for (`interface` in interfaces) {
+                if (`interface`.name == cniIfName) {
+                    haveContainerIf = true
+                    this += AddResult.Interface(
+                        name = cniIfName,
+                        mac = `interface`.mac ?: "00:00:00:00:00:00",
+                        mtu = `interface`.mtu ?: 1500u,
+                        sandbox = cniContainerId
+                    )
+                } else {
+                    this += `interface`.copy(
+                        mac = `interface`.mac ?: "00:00:00:00:00:00",
+                        mtu = `interface`.mtu ?: 1500u
+                    )
                 }
-            )
-        },
-        routes = routes.map { route ->
-            AddResult.Route(
-                dst = route.dst.toString(),
-                gw = route.gateway?.toString(),
-                mtu = route.mtu,
-                advmss = route.advmss,
-                priority = route.priority,
-                table = route.table,
-                scope = route.scope
-            )
-        },
-        dns = dns
-    )
+            }
+            if (!haveContainerIf) {
+                this += AddResult.Interface(
+                    name = cniIfName,
+                    mac = "00:00:00:00:00:00",
+                    mtu = 1500u,
+                    sandbox = cniContainerId
+                )
+            }
+        }
+        return AddResult(
+            cniVersion = version,
+            interfaces = finalInterfaces,
+            ips = ips.map { ip ->
+                AddResult.Ip(
+                    address = "${ip.address}/${ip.prefixLen}",
+                    version = when (ip.ipVersion) {
+                        IPAddress.IPVersion.IPV4 -> "4"
+                        IPAddress.IPVersion.IPV6 -> "6"
+                    },
+                    gateway = ip.gateway?.toString(),
+                    `interface` = ip.ifName?.let { ifName ->
+                        finalInterfaces
+                            .indexOfFirst { it.name == ifName }
+                            .toUInt()
+                    }
+                )
+            },
+            routes = routes.map { route ->
+                AddResult.Route(
+                    dst = route.dst.toString(),
+                    gw = route.gateway?.toString(),
+                    mtu = route.mtu,
+                    advmss = route.advmss,
+                    priority = route.priority,
+                    table = route.table,
+                    scope = route.scope
+                )
+            },
+            dns = dns
+        )
+    }
 
     private fun mergeResult(
         left: JsonObject,

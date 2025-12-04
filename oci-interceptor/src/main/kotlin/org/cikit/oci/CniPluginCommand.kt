@@ -26,7 +26,7 @@ import java.nio.channels.Channels
 import java.nio.channels.FileChannel
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
-import kotlin.collections.set
+import kotlin.concurrent.thread
 import kotlin.io.path.*
 import kotlin.system.exitProcess
 
@@ -140,7 +140,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
             "command" to cniCommand.uppercase(),
             "containerId" to cniContainerId,
             "cniArgs" to parseArgs(),
-            "env" to rebuildEnv(),
+            "env" to rebuildEnv(cniCommand.uppercase()),
             "logLevel" to logger.logLevel
         )
     }
@@ -149,7 +149,9 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         logger.trace(
             TraceEvent.Exec(
                 "env",
-                *rebuildEnv().entries.map { (k, v) -> "$k=$v" }.toTypedArray(),
+                *rebuildEnv(cniCommand.uppercase()).entries
+                    .map { (k, v) -> "$k=$v" }
+                    .toTypedArray(),
                 "cni-plugin"
             )
         )
@@ -222,215 +224,275 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
             "CNI_IFNAME environment variable not set"
         }
         val netConfig = readStdin()
+        val netConfigMap = netConfig.mapValues { (_, v) -> v.toAny() }
         val version = readVersion(netConfig)
         val type = readType(netConfig)
         val enabledPlugins = plugins.filter { it.enabled && it.type == type }
-        var prevResult = readPrevResult(netConfig)
+        var addResult = readPrevResult(netConfig)
+        var ifConfig = addResult?.let {
+            json.decodeFromJsonElement<AddResult>(it).toIFConfig(netConfig)
+        }
         if (!localStateDir.exists()) {
             localStateDir.createDirectories()
         }
         val setupResultFile =
             localStateDir / "${cniContainerId}-${cniIfName}.cni"
-        var sanitizeResult = false
 
         val vars = vars.toMutableMap()
-        vars["cniConfig"] = netConfig.toAny()
+        val scriptEnv = rebuildEnv(phase.cniCommand)
+        vars["command"] = phase.cniCommand
+        vars["env"] = scriptEnv
+        vars["cniConfig"] = netConfigMap
         vars["cniVersion"] = version
         vars["cniType"] = type
-        vars["ifConfig"] = prevResult?.let {
-            val ipc = json.decodeFromJsonElement<AddResult>(it)
-                .toIFConfig(netConfig)
-            json.encodeToJsonElement(ipc).toAny()
+        vars["ifConfig"] = ifConfig?.let {
+            json.encodeToJsonElement(it).toAny()
         }
+        vars["setupResultFile"] = setupResultFile.name
 
-        for (plugin in enabledPlugins) {
-            val prepareScript = phase.prepare(plugin)?.let {
-                logger.info("rendering prepare script: $it")
-                renderTemplate(it, vars) ?: continue
-            }
-            val prepareCommand = phase.prepareCommand(plugin)
-                ?.let { renderCommand(it, vars) }
-                ?: prepareScript?.let { plugin.defaultCommand }
-            if (prepareCommand != null) {
-                logger.info("running prepare command: $prepareCommand")
-                runScript(
-                    args = prepareCommand,
-                    script = prepareScript,
-                    workDir = localStateDir,
-                    timeout = plugin.timeout
-                )
-            }
-            val delegateCommand = when (plugin.delegate) {
-                CniPluginConfig.DelegationMode.NONE -> {
-                    null
+        try {
+            for (plugin in enabledPlugins) {
+                val prepareScript = phase.prepare(plugin)?.let {
+                    logger.info("rendering prepare script: $it")
+                    renderTemplate(it, vars) ?: continue
                 }
-                CniPluginConfig.DelegationMode.IPAM -> {
-                    plugin.delegateCommand
-                        ?.let { renderCommand(it, vars, true) }
-                        ?: listOf(resolveIpamPlugin(netConfig))
-                }
-                CniPluginConfig.DelegationMode.CNI -> {
-                    plugin.delegateCommand
-                        ?.let { renderCommand(it, vars, true) }
-                        ?: listOf(resolveCniPlugin(type))
-                }
-            }
-            if (delegateCommand != null) {
-                logger.info("running ${plugin.delegate}: $delegateCommand")
-                val output = runCniPlugin(
-                    args = delegateCommand,
-                    netConfig = netConfig,
-                    workDir = localStateDir,
-                    timeout = plugin.timeout,
-                )
-                val delegateResult = json.decodeFromString<JsonObject>(output)
-                logger.info(
-                    "loaded result: " + Json.encodeToString(delegateResult)
-                )
-                val ifConfig = json
-                    .decodeFromJsonElement<AddResult>(delegateResult)
-                    .toIFConfig(netConfig)
-                val newCniConfig = buildJsonObject {
-                    for ((k, v) in netConfig) {
-                        put(k, v)
-                    }
-                    put("prevResult", delegateResult)
-                }
-                vars["cniConfig"] = newCniConfig.toAny()
-                vars["ifConfig"] = json.encodeToJsonElement(ifConfig).toAny()
-                prevResult = delegateResult
-                if (plugin.delegate == CniPluginConfig.DelegationMode.IPAM) {
-                    // cni plugin must deliver a full result
-                    sanitizeResult = true
-                }
-            }
-            val setupVars = vars + mapOf(
-                "setupResultFile" to setupResultFile.name
-            )
-            val setupScript = phase.main(plugin)?.let {
-                logger.info("rendering setup script: $it")
-                renderTemplate(it, setupVars) ?: continue
-            }
-            val setupCommand = phase.mainCommand(plugin)
-                ?.let { renderCommand(it, setupVars) }
-                ?: setupScript?.let { plugin.defaultCommand }
-            if (setupCommand != null) {
-                logger.info("running setup script: $setupCommand")
-                val setupResult: JsonObject? = FileChannel.open(
-                    setupResultFile,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.DELETE_ON_CLOSE,
-                    StandardOpenOption.READ,
-                    StandardOpenOption.WRITE
-                ).use { fc ->
-                    fc.lock().use { lock ->
-                        require(lock.isValid) {
-                            "error locking $setupResultFile"
-                        }
-                        prevResult?.let {
-                            val ifConfig = json
-                                .decodeFromJsonElement<AddResult>(it)
-                                .toIFConfig(netConfig)
-                            val ifConfigEncoded = Json.encodeToString(ifConfig)
-                            val outputStream = Channels.newOutputStream(fc)
-                            outputStream.write(
-                                ifConfigEncoded.encodeToByteArray()
-                            )
-                            outputStream.write("\n".encodeToByteArray())
-                            outputStream.flush()
-                        }
+                val prepareCommand = phase.prepareCommand(plugin)
+                    ?.let { renderCommand(it, vars) }
+                    ?: prepareScript?.let { plugin.defaultCommand }
+                if (prepareCommand != null) {
+                    logger.info("running prepare command: $prepareCommand")
+                    val setupResult = captureSetupResult(
+                        setupResultFile,
+                        ifConfig
+                    ) {
                         runScript(
+                            env = scriptEnv,
+                            args = prepareCommand,
+                            script = prepareScript,
+                            workDir = localStateDir,
+                            timeout = plugin.timeout
+                        )
+                    }
+                    if (setupResult != null) {
+                        logger.info(
+                            "loaded result: ${Json.encodeToString(setupResult)}"
+                        )
+                        addResult = json.encodeToJsonElement(
+                            setupResult.toAddResult(
+                                version = version,
+                                cniIfName = ifName,
+                                cniContainerId = cniContainerId
+                            )
+                        ).jsonObject
+                        ifConfig = json
+                            .decodeFromJsonElement<AddResult>(addResult)
+                            .toIFConfig(netConfig)
+                        vars["cniConfig"] = netConfigMap +
+                                ("prevResult" to addResult.toAny())
+                        vars["ifConfig"] = json
+                            .encodeToJsonElement(ifConfig)
+                            .toAny()
+                    }
+                }
+                val delegateCommand = when (plugin.delegate) {
+                    CniPluginConfig.DelegationMode.NONE -> {
+                        null
+                    }
+
+                    CniPluginConfig.DelegationMode.IPAM -> {
+                        plugin.delegateCommand
+                            ?.let { renderCommand(it, vars, true) }
+                            ?: listOf(resolveIpamPlugin(netConfig))
+                    }
+
+                    CniPluginConfig.DelegationMode.CNI -> {
+                        plugin.delegateCommand
+                            ?.let { renderCommand(it, vars, true) }
+                            ?: listOf(resolveCniPlugin(type))
+                    }
+                }
+                if (delegateCommand != null) {
+                    logger.info("running ${plugin.delegate}: $delegateCommand")
+                    val output = runCniPlugin(
+                        env = scriptEnv,
+                        args = delegateCommand,
+                        netConfig = netConfig,
+                        workDir = localStateDir,
+                        timeout = plugin.timeout,
+                        runDelOnError = true
+                    )
+                    val delegateResult = json
+                        .decodeFromString<JsonObject>(output)
+                    logger.info(
+                        "loaded result: ${Json.encodeToString(delegateResult)}"
+                    )
+                    val convertedResult = json
+                        .decodeFromJsonElement<AddResult>(delegateResult)
+                        .toIFConfig(netConfig)
+                    if (plugin.delegate == CniPluginConfig.DelegationMode.CNI) {
+                        // replace ifConfig with full result from CNI plugin
+                        ifConfig = convertedResult
+                        addResult = delegateResult
+                    } else {
+                        // merge in partial result from IPAM plugin
+                        ifConfig = ifConfig?.merge(
+                            json
+                                .encodeToJsonElement(convertedResult)
+                                .jsonObject
+                        ) ?: convertedResult
+                        addResult = json.encodeToJsonElement(
+                            ifConfig.toAddResult(
+                                version = version,
+                                cniIfName = ifName,
+                                cniContainerId = cniContainerId
+                            )
+                        ).jsonObject
+                        // rebuild ifConfig from merged result
+                        ifConfig = json
+                            .decodeFromJsonElement<AddResult>(addResult)
+                            .toIFConfig(netConfig)
+                    }
+                    vars["cniConfig"] = netConfigMap +
+                            ("prevResult" to addResult.toAny())
+                    vars["ifConfig"] = json
+                        .encodeToJsonElement(ifConfig)
+                        .toAny()
+                }
+                val setupScript = phase.main(plugin)?.let {
+                    logger.info("rendering setup script: $it")
+                    renderTemplate(it, vars) ?: continue
+                }
+                val setupCommand = phase.mainCommand(plugin)
+                    ?.let { renderCommand(it, vars) }
+                    ?: setupScript?.let { plugin.defaultCommand }
+                if (setupCommand != null) {
+                    logger.info("running setup script: $setupCommand")
+                    val setupResult = captureSetupResult(
+                        setupResultFile,
+                        ifConfig
+                    ) {
+                        runScript(
+                            env = scriptEnv,
                             args = setupCommand,
                             script = setupScript,
                             workDir = localStateDir,
                             timeout = plugin.timeout
                         )
-                        fc.position(0L)
-                        val inputStream = Channels.newInputStream(fc)
-                        val lines = inputStream.bufferedReader().lineSequence()
-                            .map { Json.decodeFromString<JsonObject>(it) }
-                            .iterator()
-                        if (lines.hasNext()) {
-                            var finalResult: IFConfig = IFConfig
-                                .decodeFromJsonElement(lines.next())
-                            while (lines.hasNext()) {
-                                finalResult = finalResult.merge(lines.next())
-                            }
-                            json.encodeToJsonElement(finalResult.toAddResult())
-                                .jsonObject
-                        } else {
-                            null
-                        }
+                    }
+                    if (setupResult != null) {
+                        logger.info(
+                            "loaded result: ${Json.encodeToString(setupResult)}"
+                        )
+                        addResult = json.encodeToJsonElement(
+                            setupResult.toAddResult(
+                                version = version,
+                                cniIfName = ifName,
+                                cniContainerId = cniContainerId
+                            )
+                        ).jsonObject
+                        ifConfig = json
+                            .decodeFromJsonElement<AddResult>(addResult)
+                            .toIFConfig(netConfig)
+                        vars["cniConfig"] = netConfigMap +
+                                ("prevResult" to addResult.toAny())
+                        vars["ifConfig"] = json
+                            .encodeToJsonElement(ifConfig)
+                            .toAny()
                     }
                 }
-                if (setupResult != null) {
-                    logger.info(
-                        "loaded result: " + Json.encodeToString(setupResult)
-                    )
-                    prevResult = setupResult
-                    sanitizeResult = true
+            }
+        } catch (ex: Exception) {
+            val finalNetConfig = addResult?.let { finalResult ->
+                buildJsonObject {
+                    for ((k, v) in netConfig) {
+                        put(k, v)
+                    }
+                    put("prevResult", finalResult)
                 }
             }
-        }
-
-        val result: AddResult? = prevResult?.let {
-            if (!sanitizeResult) {
-                return it
+            if (finalNetConfig != null) {
+                try {
+                    runPlugins(
+                        config.cni.plugin,
+                        CniPluginConfig.Delete,
+                        finalNetConfig
+                    )
+                } catch (suppressed: Exception) {
+                    ex.addSuppressed(suppressed)
+                }
             }
-            json.decodeFromJsonElement(it)
+            throw ex
         }
 
-        logger.info("sanitizing result")
-
-        var containerIfIndex: UInt? = null
-        val interfaces = mutableListOf<AddResult.Interface>()
-
-        result?.interfaces?.forEachIndexed { index, `interface` ->
-            if (`interface`.name == ifName) {
-                containerIfIndex = index.toUInt()
-                interfaces += AddResult.Interface(
-                    name = ifName,
-                    mac = `interface`.mac ?: "00:00:00:00:00:00",
-                    mtu = `interface`.mtu ?: 1500u,
-                    sandbox = cniContainerId
-                )
-            } else {
-                interfaces += `interface`.copy(
-                    mac = `interface`.mac ?: "00:00:00:00:00:00",
-                    mtu = `interface`.mtu ?: 1500u
-                )
-            }
-        }
-
-        if (containerIfIndex == null) {
-            containerIfIndex = 0u
-            interfaces += AddResult.Interface(
-                name = ifName,
-                mac = "00:00:00:00:00:00",
-                mtu = 1500u,
-                sandbox = cniContainerId
+        return addResult ?: json.encodeToJsonElement(
+                IFConfig().toAddResult(
+                version = version,
+                cniIfName = ifName,
+                cniContainerId = cniContainerId
             )
+        ).jsonObject
+    }
+
+    private fun captureSetupResult(
+        setupResultFile: Path,
+        ifConfig: IFConfig?,
+        block: () -> Unit
+    ): IFConfig? {
+        val cleanup = thread(start = false) {
+            setupResultFile.deleteIfExists()
         }
-
-        val sanitizedResult = AddResult(
-            cniVersion = version,
-            interfaces = interfaces.toList(),
-            ips = result?.ips?.map { ip ->
-                ip.copy(`interface` = containerIfIndex)
-            } ?: emptyList(),
-            routes = result?.routes ?: emptyList(),
-            dns = result?.dns ?: AddResult.Dns()
-        )
-
-        return json.encodeToJsonElement(sanitizedResult) as JsonObject
+        Runtime.getRuntime().addShutdownHook(cleanup)
+        val setupResult: IFConfig? = try {
+            FileChannel.open(
+                setupResultFile,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.READ,
+                StandardOpenOption.WRITE
+            ).use { fc ->
+                fc.lock().use { lock ->
+                    require(lock.isValid) {
+                        "error locking $setupResultFile"
+                    }
+                    ifConfig?.let {
+                        val ifConfigEncoded = Json.encodeToString(ifConfig)
+                        val outputStream = Channels.newOutputStream(fc)
+                        outputStream.write(
+                            ifConfigEncoded.encodeToByteArray()
+                        )
+                        outputStream.write("\n".encodeToByteArray())
+                        outputStream.flush()
+                    }
+                    block()
+                    fc.position(0L)
+                    val inputStream = Channels.newInputStream(fc)
+                    val lines = inputStream.bufferedReader().lineSequence()
+                        .map { Json.decodeFromString<JsonObject>(it) }
+                        .iterator()
+                    if (lines.hasNext()) {
+                        var finalResult: IFConfig = IFConfig
+                            .decodeFromJsonElement(lines.next())
+                        while (lines.hasNext()) {
+                            finalResult = finalResult.merge(lines.next())
+                        }
+                        finalResult
+                    } else {
+                        null
+                    }
+                }
+            }
+        } finally {
+            (cleanup as Runnable).run()
+            Runtime.getRuntime().removeShutdownHook(cleanup)
+        }
+        return setupResult
     }
 
     private fun runPlugins(
         plugins: List<CniPluginConfig>,
-        phase: CniPhase
+        phase: CniPhase,
+        netConfig: JsonObject = readStdin()
     ) {
-        val netConfig = readStdin()
         val version = readVersion(netConfig)
         val type = readType(netConfig)
         val enabledPlugins = plugins.filter { it.enabled && it.type == type }
@@ -440,6 +502,9 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         }
 
         val vars = vars.toMutableMap()
+        val scriptEnv = rebuildEnv(phase.cniCommand)
+        vars["command"] = phase.cniCommand
+        vars["env"] = scriptEnv
         vars["cniConfig"] = netConfig.toAny()
         vars["cniVersion"] = version
         vars["cniType"] = type
@@ -460,6 +525,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
             if (prepareCommand != null) {
                 logger.info("running prepare $phase script: $prepareCommand")
                 runScript(
+                    env = scriptEnv,
                     args = prepareCommand,
                     script = prepareScript,
                     workDir = localStateDir,
@@ -494,11 +560,11 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                     "running ${plugin.delegate} $phase: $delegateCommand"
                 )
                 runCniPlugin(
+                    env = scriptEnv,
                     args = delegateCommand,
                     netConfig = netConfig,
                     workDir = localStateDir,
-                    timeout = plugin.timeout,
-                    runDelOnError = true
+                    timeout = plugin.timeout
                 )
             }
             val mainScript = phase.main(plugin)?.let {
@@ -511,6 +577,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
             if (mainCommand != null) {
                 logger.info("running $phase script: $mainCommand")
                 runScript(
+                    env = scriptEnv,
                     args = mainCommand,
                     script = mainScript,
                     workDir = localStateDir,
@@ -626,7 +693,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         return resolveCniPlugin(ipamType)
     }
 
-    private fun rebuildEnv() = buildMap {
+    private fun rebuildEnv(cniCommand: String) = buildMap {
         put("CNI_COMMAND", cniCommand)
         put("CNI_CONTAINERID", cniContainerId)
         cniNetNs?.let { put("CNI_NETNS", it) }
@@ -692,6 +759,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
     }
 
     private fun runScript(
+        env: Map<String, String>,
         args: List<String>,
         script: String?,
         workDir: Path,
@@ -704,6 +772,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         pb.directory(workDir.toFile())
         with (pb.environment()) {
             put("CID", cniContainerId)
+            putAll(env)
         }
         val p = pb.start()
         val rc = runBlocking(Dispatchers.IO) {
@@ -740,6 +809,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
     }
 
     private fun runCniPlugin(
+        env: Map<String, String>,
         args: List<String>,
         netConfig: JsonObject,
         workDir: Path,
@@ -755,6 +825,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
             .redirectInput(ProcessBuilder.Redirect.PIPE)
             .redirectOutput(ProcessBuilder.Redirect.PIPE)
         pb.directory(workDir.toFile())
+        pb.environment().putAll(env)
         val p = pb.start()
         val rc = runBlocking(Dispatchers.IO) {
             withTimeoutOrNull(timeout * 1_000L) {
@@ -788,7 +859,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
         if (ex != null) {
             if (runDelOnError) {
                 try {
-                    runCniDel(args, netConfigJson, workDir, timeout)
+                    runCniDel(env, args, netConfigJson, workDir, timeout)
                 } catch (ex2: Throwable) {
                     ex.addSuppressed(ex2)
                 }
@@ -800,6 +871,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
     }
 
     private fun runCniDel(
+        env: Map<String, String>,
         args: List<String>,
         netConfigJson: String,
         workDir: Path,
@@ -814,6 +886,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
             .redirectInput(ProcessBuilder.Redirect.PIPE)
             .redirectOutput(ProcessBuilder.Redirect.PIPE)
         pb.directory(workDir.toFile())
+        pb.environment().putAll(env)
         pb.environment()["CNI_COMMAND"] = "DEL"
         val p = pb.start()
         val rc = runBlocking(Dispatchers.IO) {

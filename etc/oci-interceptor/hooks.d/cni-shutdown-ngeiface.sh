@@ -1,7 +1,3 @@
-driver_name="$(ifconfig -D -j '{{ env.CNI_CONTAINERID }}' '{{ env.CNI_IFNAME }}')" || exit 0
-driver_name="${driver_name##*drivername:[[:space:]]}"
-driver_name="${driver_name%%[[:space:]]*}"
-
 shutdown_peer()
 {
   local path="$1"
@@ -31,7 +27,10 @@ shutdown_peer()
   esac
 }
 
-shutdown_peer "$driver_name":ether
-ngctl shutdown "$driver_name":
-
+{% for interface in ifConfig.interfaces|default([]) %}
+  {% if interface.name|endswith(":") %}
+shutdown_peer '{{ interface.name }}ether'
+ngctl shutdown '{{ interface.name }}'
+  {% endif %}
+{% endfor %}
 exit 0

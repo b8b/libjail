@@ -141,5 +141,17 @@ prog="$(bpf_prog "ether src $host_mac and ether dst $jail_mac")"
 ngctl msg "bpf$jail_if": setprogram \
   "{ thisHook=\"bridge\" ifMatch=\"jail\" ifNotMatch=\"debug\" $prog }"
 
+printf '{"interfaces":[{"name":"%s","mac":"%s"}]}\n' \
+  "$host_if" "$host_mac" \
+  >> '{{ setupResultFile }}'
+
+printf '{"interfaces":[{"name":"%s","mac":"%s"}]}\n' \
+  "$jail_if": "$jail_mac" \
+  >> '{{ setupResultFile }}'
+
+printf '{"interfaces":[{"name":{{ env.CNI_IFNAME|json }},"mac":"%s"}]}\n' \
+  "$jail_mac" \
+  >> '{{ setupResultFile }}'
+
 trap '' EXIT
 exit 0

@@ -69,6 +69,7 @@ data class CniConfig(
 )
 
 sealed interface CniPhase {
+    val cniCommand: String
     val prepare: KProperty1<CniPluginConfig, UPath?>
     val prepareCommand: KProperty1<CniPluginConfig, List<String>?>
     val main: KProperty1<CniPluginConfig, UPath?>
@@ -104,6 +105,8 @@ data class CniPluginConfig(
     }
 
     object Setup : CniPhase {
+        override val cniCommand: String
+            get() = "ADD"
         override val prepare: KProperty1<CniPluginConfig, UPath?>
             get() = CniPluginConfig::prepare
         override val prepareCommand: KProperty1<CniPluginConfig, List<String>?>
@@ -115,6 +118,8 @@ data class CniPluginConfig(
     }
 
     object Check : CniPhase {
+        override val cniCommand: String
+            get() = "CHECK"
         override val prepare: KProperty1<CniPluginConfig, UPath?>
             get() = CniPluginConfig::prepareCheck
         override val prepareCommand: KProperty1<CniPluginConfig, List<String>?>
@@ -126,6 +131,8 @@ data class CniPluginConfig(
     }
 
     object Delete : CniPhase {
+        override val cniCommand: String
+            get() = "DEL"
         override val prepare: KProperty1<CniPluginConfig, UPath?>
             get() = CniPluginConfig::prepareDelete
         override val prepareCommand: KProperty1<CniPluginConfig, List<String>?>

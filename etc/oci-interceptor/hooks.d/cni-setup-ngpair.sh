@@ -35,14 +35,39 @@ ngctl connect "$host_if": "$jail_if": ether ether
 
 ifconfig "$jail_if" vnet '{{ env.CNI_CONTAINERID }}'
 
-ifconfig -j '{{ env.CNI_CONTAINERID }}' "$jail_if" name '{{ env.CNI_IFNAME }}' > /dev/null
+ifconfig -j '{{ env.CNI_CONTAINERID }}' "$jail_if" name '{{ env.CNI_IFNAME }}'
 
 {% if cniArgs.MAC is defined %}
-ifconfig -j '{{ env.CNI_CONTAINERID }}' '{{ env.CNI_IFNAME }}' ether '{{ cniArgs.MAC }}' > /dev/null
+
+ifconfig -j '{{ env.CNI_CONTAINERID }}' '{{ env.CNI_IFNAME }}' ether '{{ cniArgs.MAC }}'
+
+printf '{"interfaces":[{"name":"%s","mac":{{ cniArgs.MAC|json }}}]}\n' \
+  "$jail_if": >> '{{ setupResultFile }}'
+
+printf '{"interfaces":[{"name":{{ env.CNI_IFNAME|json }},"mac":{{ cniArgs.MAC|json }}]}\n' \
+  >> '{{ setupResultFile }}'
+
+{% else %}
+
+jail_ifc="$(ifconfig -j '{{ env.CNI_CONTAINERID }}' -D '{{ env.CNI_IFNAME }}')"
+jail_mac="${jail_ifc##*[[:space:]]ether[[:space:]]}"
+jail_mac="${jail_mac%%[[:space:]]*}"
+
+printf '{"interfaces":[{"name":"%s","mac":"%s"}]}\n' \
+  "$jail_if": "$jail_mac" >> '{{ setupResultFile }}'
+
+printf '{"interfaces":[{"name":{{ env.CNI_IFNAME|json }},"mac":"%s"}]}\n' \
+  "$jail_mac" >> '{{ setupResultFile }}'
+
 {% endif %}
 
 {% if cniConfig.bridge is defined %}
-  ifconfig '{{ cniConfig.bridge }}' addm "$host_if"
+ifconfig '{{ cniConfig.bridge }}' addm "$host_if"
+bridge_ifc="$(ifconfig -D '{{ cniConfig.bridge }}')"
+bridge_mac="${bridge_ifc##*[[:space:]]ether[[:space:]]}"
+bridge_mac="${bridge_mac%%[[:space:]]*}"
+printf '{"interfaces":[{"name":{{ cniConfig.bridge|json }},"mac":"%s"}]}\n' \
+  "$bridge_mac" >> '{{ setupResultFile }}'
 {% endif %}
 
 trap '' EXIT

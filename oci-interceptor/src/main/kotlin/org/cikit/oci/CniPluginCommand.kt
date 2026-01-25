@@ -15,7 +15,6 @@ import org.cikit.forte.Forte
 import org.cikit.forte.core.UPath
 import org.cikit.forte.core.toNioPath
 import org.cikit.forte.core.toUPath
-import org.cikit.forte.eval.evalTemplate
 import org.cikit.libjail.TraceEvent
 import org.cikit.oci.cni.*
 import java.io.File
@@ -613,7 +612,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
                     templateSrc,
                     fullPath.toUPath()
                 )
-                forte.captureToString()
+                forte.renderToString()
                     .setVars(vars)
                     .evalTemplate(template)
                     .result
@@ -637,7 +636,7 @@ class CniPluginCommand : CliktCommand("cni-plugin") {
             var renderedArg = try {
                 val template = forte.parseTemplate(arg)
                 runBlocking {
-                    forte.captureToString()
+                    forte.renderToString()
                         .setVars(vars)
                         .evalTemplate(template)
                         .result

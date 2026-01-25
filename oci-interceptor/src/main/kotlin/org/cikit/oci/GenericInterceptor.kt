@@ -11,7 +11,6 @@ import net.vieiro.toml.TOMLParser
 import org.cikit.forte.Forte
 import org.cikit.forte.core.toNioPath
 import org.cikit.forte.core.toUPath
-import org.cikit.forte.eval.evalTemplate
 import org.cikit.libjail.TraceEvent
 import java.io.StringWriter
 import java.nio.ByteBuffer
@@ -352,7 +351,7 @@ open class GenericInterceptor(
                     fullPath.toUPath()
                 )
                 runBlocking {
-                    forte.captureToString()
+                    forte.renderToString()
                         .setVars(vars)
                         .evalTemplate(template)
                         .result
@@ -374,7 +373,7 @@ open class GenericInterceptor(
             try {
                 val template = forte.parseTemplate(arg)
                 runBlocking {
-                    forte.captureToString()
+                    forte.renderToString()
                         .setVars(vars)
                         .evalTemplate(template)
                         .result

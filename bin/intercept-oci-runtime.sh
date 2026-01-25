@@ -30,7 +30,7 @@ export INTERCEPT_OCI_STATE_DIR="$ROOTDIR"/tmp
 #   |_|\_\___/ \__|_|_|_| |_| |___/\___|_|  |_| .__/ \__|
 #                         ______              | |
 #                        |______|             |_|
-v=2.2.21.32
+v=2.3.0.33
 p=org/cikit/kotlin_script/"$v"/kotlin_script-"$v".sh
 url="${M2_CENTRAL_REPO:=https://repo1.maven.org/maven2}"/"$p"
 kotlin_script_sh="${M2_LOCAL_REPO:-"$HOME"/.m2/repository}"/"$p"
@@ -45,7 +45,7 @@ if ! [ -r "$kotlin_script_sh" ]; then
   fi
   dgst_cmd="$(command -v openssl) dgst -sha256 -r" || dgst_cmd=sha256sum
   case "$($dgst_cmd < "$kotlin_script_sh")" in
-  "ad53c905302b3247059729f3ff4762727a0c52b903d66241acc277c60d427e94 "*) ;;
+  "bef2250e52a4ed3e912746d446e7d78acad30c790a4553eb365a5ec5d61f702f "*) ;;
   *) echo "error: failed to verify kotlin_script.sh" >&2
      rm -f "$kotlin_script_sh"; exit 1;;
   esac
@@ -62,13 +62,14 @@ fi
 ///DEP=net.vieiro:toml-java:13.4.2
 ///DEP=org.antlr:antlr4-runtime:4.13.1
 
-///DEP=org.cikit:forte-jvm:0.6.2
+///DEP=org.cikit:forte-jvm:0.8.1
 ///DEP=org.jetbrains.kotlinx:kotlinx-io-bytestring-jvm:0.8.0
+///DEP=org.jetbrains.kotlinx:kotlinx-collections-immutable-jvm:0.4.0
 
 ///DEP=com.github.seancfoley:ipaddress:5.5.1
 
-///DEP=com.github.ajalt.clikt:clikt-jvm:5.0.3
-///DEP=com.github.ajalt.clikt:clikt-core-jvm:5.0.3
+///DEP=com.github.ajalt.clikt:clikt-jvm:5.1.0
+///DEP=com.github.ajalt.clikt:clikt-core-jvm:5.1.0
 ///DEP=com.github.ajalt.mordant:mordant-jvm:3.0.2
 ///DEP=com.github.ajalt.mordant:mordant-core-jvm:3.0.2
 ///DEP=com.github.ajalt.colormath:colormath-jvm:3.6.0

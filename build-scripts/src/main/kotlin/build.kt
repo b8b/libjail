@@ -10,7 +10,7 @@
 #   |_|\_\___/ \__|_|_|_| |_| |___/\___|_|  |_| .__/ \__|
 #                         ______              | |
 #                        |______|             |_|
-v=2.2.21.32
+v=2.3.0.33
 p=org/cikit/kotlin_script/"$v"/kotlin_script-"$v".sh
 url="${M2_CENTRAL_REPO:=https://repo1.maven.org/maven2}"/"$p"
 kotlin_script_sh="${M2_LOCAL_REPO:-"$HOME"/.m2/repository}"/"$p"
@@ -25,7 +25,7 @@ if ! [ -r "$kotlin_script_sh" ]; then
   fi
   dgst_cmd="$(command -v openssl) dgst -sha256 -r" || dgst_cmd=sha256sum
   case "$($dgst_cmd < "$kotlin_script_sh")" in
-  "ad53c905302b3247059729f3ff4762727a0c52b903d66241acc277c60d427e94 "*) ;;
+  "bef2250e52a4ed3e912746d446e7d78acad30c790a4553eb365a5ec5d61f702f "*) ;;
   *) echo "error: failed to verify kotlin_script.sh" >&2
      rm -f "$kotlin_script_sh"; exit 1;;
   esac
@@ -33,7 +33,7 @@ fi
 . "$kotlin_script_sh"; exit 2
 */
 
-///DEP=org.cikit:kotlin_script:2.2.21.32
+///DEP=org.cikit:kotlin_script:2.3.0.33
 
 ///DEP=com.github.ajalt.mordant:mordant-jvm:3.0.2
 ///DEP=com.github.ajalt.mordant:mordant-core-jvm:3.0.2
@@ -43,8 +43,8 @@ fi
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-ffm-jvm:3.0.2
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-graal-ffi-jvm:3.0.2
 
-///DEP=com.github.ajalt.clikt:clikt-jvm:5.0.3
-///DEP=com.github.ajalt.clikt:clikt-core-jvm:5.0.3
+///DEP=com.github.ajalt.clikt:clikt-jvm:5.1.0
+///DEP=com.github.ajalt.clikt:clikt-core-jvm:5.1.0
 
 import com.sun.jna.Native
 import kotlin_script.Dependency
@@ -145,6 +145,7 @@ fun main() {
     val modsToPatch = mapOf(
         "jna" to "com.sun.jna",
         "libjail" to "org.cikit.libjail",
+        "kotlinx-collections-immutable-jvm" to "kotlinx.collections.immutable",
         "forte-jvm" to "org.cikit.forte",
         "colormath-jvm" to "com.github.ajalt.colormath",
         "mordant-core-jvm" to "com.github.ajalt.mordant.core",
@@ -246,7 +247,7 @@ fun main() {
         )
     }
 
-    val rc = ProcessBuilder("/bin/sh", "-xc", buildScript)
+    val rc = ProcessBuilder("/bin/sh", "-xec", buildScript)
         .inheritIO()
         .start()
         .waitFor()

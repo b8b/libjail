@@ -2,32 +2,21 @@
 
 set -e
 
-# Derive the base-image version from the host base system (kernel release
-# date), same as pkgbuild does for the ABI/base repo. This pins an immutable
-# freebsd-runtime tag while always tracking the host's major.minor.
-: ${FBSD_IMAGE_PREFIX:=ghcr.io/freebsd/freebsd-runtime}
-os_rel="$(sysctl -n kern.osreldate)"
-fbsd_major="$(( $os_rel / 100000 ))"
-fbsd_minor="$(( ($os_rel / 1000) % 100 ))"
-BASE_IMAGE="${FBSD_IMAGE_PREFIX}:$fbsd_major.$fbsd_minor"
-
-echo "building from base image: $BASE_IMAGE" >&2
-
 if [ -e target/libjail ]; then
   echo "target/libjail already exists. remove to run a fresh build!" >&2
   exit 1
 fi
 
-./bin/pkgbuild.sh -P --from "$BASE_IMAGE" --mount .:/src \
+./bin/pkgbuild.sh -P --from scratch --mount .:/src \
   install -y \
       FreeBSD-runtime FreeBSD-caroot FreeBSD-zoneinfo FreeBSD-openssl \
   --then install -y \
       FreeBSD-certctl FreeBSD-src FreeBSD-src-sys \
       FreeBSD-runtime FreeBSD-utilities FreeBSD-rc FreeBSD-mtree \
-      FreeBSD-fetch FreeBSD-clang FreeBSD-lld FreeBSD-elftoolchain \
+      FreeBSD-fetch FreeBSD-clang FreeBSD-lld FreeBSD-bmake \
       FreeBSD-clang-dev FreeBSD-clibs-dev FreeBSD-runtime-dev \
       FreeBSD-utilities-dev FreeBSD-libexecinfo-dev \
-      FreeBSD-libcompiler_rt-dev FreeBSD-libbsm-dev FreeBSD-openssl-lib-dev \
+      FreeBSD-libcompiler_rt-dev \
       FreeBSD-tcpd-dev openjdk25 rust \
   --then run --shell 'set -e
       export JAVA_HOME=/usr/local/openjdk25

@@ -452,11 +452,9 @@ class PkgbuildPipeline(
         createMountPoint(root, Path("dev"))
         val etcMp = createMountPoint(root, Path("etc"))
         // Bootstrap a TLS trust store so pkg can fetch over https (pkg+https)
-        // even for an empty/scratch root. ca_root_nss ships the bundle as
-        // /usr/local/share/certs/ca-root-nss.crt (cert.pem is created by its
-        // post-install lua), so extract that as <root>/usr/local/etc/ssl/
-        // cert.pem and symlink <root>/etc/ssl/cert.pem to it. Falls back to a
-        // host CA file if the package fetch is unavailable.
+        // even for an empty/scratch root: extract ca_root_nss's bundle and
+        // symlink /usr/local/etc/ssl/cert.pem and /etc/ssl/cert.pem to it.
+        // Falls back to a host CA file if the package fetch is unavailable.
         val rootCertPem = (createMountPoint(root, Path("etc/ssl")) / "cert.pem")
         if (!rootCertPem.exists(LinkOption.NOFOLLOW_LINKS)) {
             bootstrapCaBundle(root)
@@ -542,10 +540,13 @@ class PkgbuildPipeline(
     }
 
     private fun bootstrapCaBundle(root: Path) {
-        val dest = createMountPoint(root, Path("usr/local/etc/ssl")) / "cert.pem"
-        if (!dest.exists(LinkOption.NOFOLLOW_LINKS)) {
-            // Prefer the canonical ca_root_nss bundle from the FreeBSD (ports)
-            // repo; pkg verifies it by signature, so no pre-existing CA needed.
+        // ca_root_nss ships the bundle at /usr/local/share/certs/ca-root-nss.crt
+        // (cert.pem is normally produced by its post-install lua). Extract that
+        // .crt and symlink the standard cert.pem locations to it so pkg/fetch
+        // can verify over https even for an empty/scratch root.
+        val certFile = createMountPoint(root, Path("usr/local/share/certs")) /
+                "ca-root-nss.crt"
+        if (!certFile.exists(LinkOption.NOFOLLOW_LINKS)) {
             try {
                 runPkg(
                     jailPkgOptions,
@@ -556,13 +557,9 @@ class PkgbuildPipeline(
                 )
                 val pkg = jailPkgCacheRoot / pkgCacheDir / "$name.pkg"
                 if (pkg.exists(LinkOption.NOFOLLOW_LINKS)) {
-                    // ca_root_nss stores the bundle as
-                    // /usr/local/share/certs/ca-root-nss.crt; rename it to
-                    // /usr/local/etc/ssl/cert.pem on extraction.
                     ProcessBuilder(
                         "tar", "-C", root.pathString,
                         "-xpf", pkg.pathString,
-                        "-s", "|^/usr/local/share/certs/ca-root-nss.crt|/usr/local/etc/ssl/cert.pem|",
                         "/usr/local/share/certs/ca-root-nss.crt"
                     ).exec()
                 }
@@ -570,7 +567,7 @@ class PkgbuildPipeline(
                 // fall through to a host CA file below
             }
         }
-        if (!dest.exists(LinkOption.NOFOLLOW_LINKS)) {
+        if (!certFile.exists(LinkOption.NOFOLLOW_LINKS)) {
             val hostFile = listOf(
                 Path("/usr/local/etc/ssl/cert.pem"),
                 Path("/etc/ssl/cert.pem")
@@ -578,19 +575,24 @@ class PkgbuildPipeline(
             if (hostFile == null) {
                 return  // no CA available; leave https bootstrap to fail visibly
             }
-            hostFile.copyTo(dest)
+            hostFile.copyTo(certFile)
         }
-        val etcCertPem = createMountPoint(root, Path("etc/ssl")) / "cert.pem"
-        if (etcCertPem.exists(LinkOption.NOFOLLOW_LINKS)) {
-            (etcCertPem).deleteIfExists()
+        linkTo(certFile,
+            createMountPoint(root, Path("usr/local/etc/ssl")) / "cert.pem",
+            "../../share/certs/ca-root-nss.crt")
+        linkTo(certFile,
+            createMountPoint(root, Path("etc/ssl")) / "cert.pem",
+            "../../usr/local/share/certs/ca-root-nss.crt")
+    }
+
+    private fun linkTo(src: Path, link: Path, target: String) {
+        if (link.exists(LinkOption.NOFOLLOW_LINKS)) {
+            link.deleteIfExists()
         }
         try {
-            Files.createSymbolicLink(
-                etcCertPem,
-                Path("../usr/local/etc/ssl/cert.pem")
-            )
+            Files.createSymbolicLink(link, Path(target))
         } catch (_: Exception) {
-            dest.copyTo(etcCertPem)
+            src.copyTo(link)  // fall back to a copy if symlinks unavailable
         }
     }
 

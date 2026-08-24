@@ -651,6 +651,16 @@ class PkgbuildPipeline(
                 addAll(step.args)
             }
         )
+        // Propagate --abi so pkg -j uses the target ABI rather than deriving it
+        // from the jail's /usr/bin/uname (e.g. for cross-major upgrades via
+        // --path). Same overrides as runPkgProcessBuilder uses for the host
+        // bootstrap fetches.
+        val env = pb.environment()
+        env["ABI"] = jailAbi
+        env["OSVERSION"] = jailAbi
+            .substringAfter(':', "")
+            .substringBefore(':') + "00000"
+        env["IGNORE_OSVERSION"] = "yes"
         pb.exec()
     }
 

@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.cikit.libjail.*
 import org.cikit.oci.OciLogger
 import java.nio.channels.FileChannel
+import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -450,6 +451,15 @@ class PkgbuildPipeline(
     private fun prepareRoot(root: Path) {
         createMountPoint(root, Path("dev"))
         val etcMp = createMountPoint(root, Path("etc"))
+        // Bootstrap a TLS trust store so pkg can fetch over https (pkg+https)
+        // even for an empty/scratch root: fetch the canonical ca_root_nss
+        // bundle, install its cert.pem at <root>/usr/local/etc/ssl/cert.pem and
+        // symlink <root>/etc/ssl/cert.pem to it. Falls back to a host CA file
+        // if the package fetch is unavailable.
+        val rootCertPem = (createMountPoint(root, Path("etc/ssl")) / "cert.pem")
+        if (!rootCertPem.exists(LinkOption.NOFOLLOW_LINKS)) {
+            bootstrapCaBundle(root)
+        }
         val usrBinMp = createMountPoint(root, Path("usr/bin"))
         val varDbMp = createMountPoint(root, Path("var/db"))
         createMountPoint(root, pkgDbDir / "repos")
@@ -527,6 +537,55 @@ class PkgbuildPipeline(
                 "-o", rootServicesDb.pathString,
                 (etcMp / "services").pathString
             ).exec()
+        }
+    }
+
+    private fun bootstrapCaBundle(root: Path) {
+        val dest = createMountPoint(root, Path("usr/local/etc/ssl")) / "cert.pem"
+        if (!dest.exists(LinkOption.NOFOLLOW_LINKS)) {
+            // Prefer the canonical ca_root_nss bundle from the FreeBSD (ports)
+            // repo; pkg verifies it by signature, so no pre-existing CA needed.
+            try {
+                runPkg(
+                    jailPkgOptions,
+                    listOf("fetch", "--quiet", "-y", "ca_root_nss")
+                )
+                val name = runPkgSearchVersion(
+                    jailPkgOptions, "ca_root_nss", "FreeBSD"
+                )
+                val pkg = jailPkgCacheRoot / pkgCacheDir / "$name.pkg"
+                if (pkg.exists(LinkOption.NOFOLLOW_LINKS)) {
+                    ProcessBuilder(
+                        "tar", "-C", root.pathString,
+                        "-xpf", pkg.pathString,
+                        "-s", "|^/||", "/usr/local/etc/ssl/cert.pem"
+                    ).exec()
+                }
+            } catch (_: Exception) {
+                // fall through to a host CA file below
+            }
+        }
+        if (!dest.exists(LinkOption.NOFOLLOW_LINKS)) {
+            val hostFile = listOf(
+                Path("/usr/local/etc/ssl/cert.pem"),
+                Path("/etc/ssl/cert.pem")
+            ).firstOrNull { it.exists(LinkOption.NOFOLLOW_LINKS) }
+            if (hostFile == null) {
+                return  // no CA available; leave https bootstrap to fail visibly
+            }
+            hostFile.copyTo(dest)
+        }
+        val etcCertPem = createMountPoint(root, Path("etc/ssl")) / "cert.pem"
+        if (etcCertPem.exists(LinkOption.NOFOLLOW_LINKS)) {
+            (etcCertPem).deleteIfExists()
+        }
+        try {
+            Files.createSymbolicLink(
+                etcCertPem,
+                Path("../usr/local/etc/ssl/cert.pem")
+            )
+        } catch (_: Exception) {
+            dest.copyTo(etcCertPem)
         }
     }
 

@@ -103,7 +103,7 @@ init_pkg()
   mkdir -p "$cache_root"/pkgboot/etc/pkg/repos
   rm -f "$cache_root"/pkgboot/etc/pkg/repos/*.conf
   repo_config "FreeBSD" \
-              "pkg+http://$PKGBUILD_SITE/\${ABI}/latest" \
+              "pkg+https://$PKGBUILD_SITE/\${ABI}/latest" \
               > "$cache_root"/pkgboot/etc/pkg/repos/FreeBSD.conf
 
   if ! [ -x "$pkg_bin" ]; then

@@ -97,13 +97,13 @@ class PkgConfig(
         if (basePkgDir != null) {
             this += "FreeBSD-base.conf" to RepoConfig(
                 name = "FreeBSD-base",
-                url = $$"pkg+http://$$pkgSite/${ABI}/$$basePkgDir",
+                url = $$"pkg+https://$$pkgSite/${ABI}/$$basePkgDir",
                 fingerPrints = basePkgKeys ?: pkgKeys
             )
         }
         this += "FreeBSD.conf" to RepoConfig(
             name = "FreeBSD",
-            url = $$"pkg+http://$$pkgSite/${ABI}/$$portPkgDir",
+            url = $$"pkg+https://$$pkgSite/${ABI}/$$portPkgDir",
             fingerPrints = pkgKeys
         )
         val localRepo = pkgCacheRoot / "local"

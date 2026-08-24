@@ -452,10 +452,11 @@ class PkgbuildPipeline(
         createMountPoint(root, Path("dev"))
         val etcMp = createMountPoint(root, Path("etc"))
         // Bootstrap a TLS trust store so pkg can fetch over https (pkg+https)
-        // even for an empty/scratch root: fetch the canonical ca_root_nss
-        // bundle, install its cert.pem at <root>/usr/local/etc/ssl/cert.pem and
-        // symlink <root>/etc/ssl/cert.pem to it. Falls back to a host CA file
-        // if the package fetch is unavailable.
+        // even for an empty/scratch root. ca_root_nss ships the bundle as
+        // /usr/local/share/certs/ca-root-nss.crt (cert.pem is created by its
+        // post-install lua), so extract that as <root>/usr/local/etc/ssl/
+        // cert.pem and symlink <root>/etc/ssl/cert.pem to it. Falls back to a
+        // host CA file if the package fetch is unavailable.
         val rootCertPem = (createMountPoint(root, Path("etc/ssl")) / "cert.pem")
         if (!rootCertPem.exists(LinkOption.NOFOLLOW_LINKS)) {
             bootstrapCaBundle(root)
@@ -555,10 +556,14 @@ class PkgbuildPipeline(
                 )
                 val pkg = jailPkgCacheRoot / pkgCacheDir / "$name.pkg"
                 if (pkg.exists(LinkOption.NOFOLLOW_LINKS)) {
+                    // ca_root_nss stores the bundle as
+                    // /usr/local/share/certs/ca-root-nss.crt; rename it to
+                    // /usr/local/etc/ssl/cert.pem on extraction.
                     ProcessBuilder(
                         "tar", "-C", root.pathString,
                         "-xpf", pkg.pathString,
-                        "-s", "|^/||", "/usr/local/etc/ssl/cert.pem"
+                        "-s", "|^/usr/local/share/certs/ca-root-nss.crt|/usr/local/etc/ssl/cert.pem|",
+                        "/usr/local/share/certs/ca-root-nss.crt"
                     ).exec()
                 }
             } catch (_: Exception) {

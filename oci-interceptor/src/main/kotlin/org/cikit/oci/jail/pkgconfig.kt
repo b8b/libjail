@@ -11,6 +11,7 @@ import kotlin.io.path.*
 class PkgConfig(
     val pkgSite: String,
     val pkgKeys: Path?,
+    val basePkgKeys: Path? = null,
     val basePkgDir: String?,
     val portPkgDir: String,
     val pkgCacheRoot: Path,
@@ -97,7 +98,7 @@ class PkgConfig(
             this += "FreeBSD-base.conf" to RepoConfig(
                 name = "FreeBSD-base",
                 url = $$"pkg+http://$$pkgSite/${ABI}/$$basePkgDir",
-                fingerPrints = pkgKeys
+                fingerPrints = basePkgKeys ?: pkgKeys
             )
         }
         this += "FreeBSD.conf" to RepoConfig(

@@ -31,6 +31,7 @@ class PkgbuildPipeline(
     val hostPatchVersion: Int,
     val hostArch: String,
     val jailAbi: String,
+    val basePkgKeys: Path?,
     jailBasePkgDir: String,
     portPkgDir: String = "latest",
     private val interceptRcJail: String,
@@ -47,6 +48,7 @@ class PkgbuildPipeline(
     private val jailPkgConfig = PkgConfig(
         pkgSite = pkgSite,
         pkgKeys = pkgKeys,
+        basePkgKeys = basePkgKeys,
         basePkgDir = jailBasePkgDir,
         portPkgDir = portPkgDir,
         pkgCacheRoot = jailPkgCacheRoot

@@ -734,19 +734,45 @@ class PkgbuildPipeline(
 
         logger.info("starting package build for '$pkgName'")
 
-        // Install dependencies via binary packages (USE_PACKAGE_DEPENDS_ONLY=yes)
-        // driven by bsd.port.mk so each dependency is resolved and installed
-        // in order, rather than force-installing the whole closure in a single
-        // pkg transaction (which now conflicts when variant packages coexist).
-        runCmdInJail(
+        val dependencyDirs = ProcessBuilder(
+            buildList {
+                add("jexec")
+                add("-l")
+                add(jail.name)
+                addAll(make)
+                add("build-depends-list")
+                add("run-depends-list")
+            }
+        ).useLines { lines ->
+            lines.toList()
+        }
+
+        val dependencies = dependencyDirs.map { dir ->
+            val dependencyName = ProcessBuilder(
+                buildList {
+                    add("jexec")
+                    add("-l")
+                    add(jail.name)
+                    addAll(envArgs)
+                    add("make")
+                    add("BATCH=yes")
+                    add("-C")
+                    add(dir)
+                    add("-VPKGNAMEPREFIX")
+                    add("-VPORTNAME")
+                    add("-VPKGNAMESUFFIX")
+                }
+            ).useLines { lines -> lines.joinToString("") }
+            logger.info("'$pkgName' depends on $dir -> '$dependencyName'")
+            dependencyName
+        }
+
+        runPkgInJail(
             jail,
-            Step.Run(
-                mount = emptyList(),
-                commit = null,
-                noExpand = true,
-                clean = true,
-                shell = false,
-                make + listOf("install-depends")
+            Step.Pkg(
+                mount = step.mount,
+                commit = step.commit,
+                args = listOf("install", "-A", "-y") + dependencies
             )
         )
 

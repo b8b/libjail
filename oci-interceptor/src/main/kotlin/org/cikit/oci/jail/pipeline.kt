@@ -442,7 +442,8 @@ class PkgbuildPipeline(
                     name = "local",
                     url = "file:///" +
                             pkgLocalRepoDir.invariantSeparatorsPathString,
-                    fingerPrints = null
+                    fingerPrints = null,
+                    priority = 10
                 ).toUcl()
             )
         }

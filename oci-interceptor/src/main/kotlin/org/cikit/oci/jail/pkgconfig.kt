@@ -24,7 +24,8 @@ class PkgConfig(
     data class RepoConfig(
         val name: String,
         val url: String,
-        val fingerPrints: Path?
+        val fingerPrints: Path?,
+        val priority: Int? = null
     ) {
         fun toUcl(): String {
             require(name.all { ch -> ch.isLetterOrDigit() || ch in "_-" }) {
@@ -43,6 +44,9 @@ class PkgConfig(
                     )
                     appendLine("    signature_type: \"fingerprints\",")
                     appendLine("    fingerprints: $fingerPrintsEscaped,")
+                }
+                if (priority != null) {
+                    appendLine("    priority: $priority,")
                 }
                 appendLine("    enabled: yes")
                 appendLine("}")
@@ -111,7 +115,8 @@ class PkgConfig(
             this += "local.conf" to RepoConfig(
                 name = "local",
                 url = "file://${localRepo.absolutePathString()}",
-                fingerPrints = null
+                fingerPrints = null,
+                priority = 10
             )
         }
     }

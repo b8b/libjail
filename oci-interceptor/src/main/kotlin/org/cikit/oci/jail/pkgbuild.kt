@@ -388,12 +388,20 @@ private class BuildPackageCommand : CliktCommand("build-package") {
         "Define environment variables to set when running make."
     )
 
+    private val verbose by option("-v", "--verbose").flag().help(
+        "Increase log verbosity to debug to expose the dependency closure " +
+                "and every make/pkg invocation."
+    )
+
     private val args by argument("ARG").multiple(required = true).help(
         "Origin of the package to build within the ports tree, " +
                 "plus optional make variables to pass. (variable=value)"
     )
 
     override fun run() {
+        if (verbose) {
+            pipelineBuilder.logger.logLevel = "debug"
+        }
         val runArgs = mutableListOf<String>()
         val nextArgs = mutableListOf<String>()
         for (arg in args) {

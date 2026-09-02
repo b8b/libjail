@@ -32,7 +32,6 @@ class PkgbuildPipeline(
     val hostPatchVersion: Int,
     val hostArch: String,
     val jailAbi: String,
-    val basePkgKeys: Path?,
     jailBasePkgDir: String,
     portPkgDir: String = "latest",
     private val interceptRcJail: String,
@@ -48,8 +47,6 @@ class PkgbuildPipeline(
 
     private val jailPkgConfig = PkgConfig(
         pkgSite = pkgSite,
-        pkgKeys = pkgKeys,
-        basePkgKeys = basePkgKeys,
         basePkgDir = jailBasePkgDir,
         portPkgDir = portPkgDir,
         pkgCacheRoot = jailPkgCacheRoot
@@ -66,7 +63,6 @@ class PkgbuildPipeline(
     } else {
         PkgConfig(
             pkgSite = pkgSite,
-            pkgKeys = pkgKeys,
             basePkgDir = null,
             portPkgDir = portPkgDir,
             pkgCacheRoot = hostPkgCacheRoot
@@ -370,18 +366,22 @@ class PkgbuildPipeline(
             !it.isDirectory() && it.isReadable()
         }
         nmount("tmpfs", tmpRepoConfDir)
+        // Write the generated repo configs (FreeBSD-ports, FreeBSD-ports-kmods,
+        // FreeBSD-base) into /usr/local/etc/pkg/repos so they override the stock
+        // /etc/pkg/FreeBSD.conf. ${ABI}/${VERSION_*} and fingerprints are left
+        // as in-jail literal paths, so no rewriting is needed here.
         for ((name, config) in jailPkgOptions.repoConfigFiles) {
             if (name != "local.conf") {
                 logger.info("setting up repository config '$name'")
-                require(haveTrusted) {
-                    "refuse to configure repository '$name': " +
-                            "no trusted fingerprints available"
+                if (config.fingerPrints?.pathString ==
+                    (Path("/") / pkgFingerPrintsDir).pathString
+                ) {
+                    require(haveTrusted) {
+                        "refuse to configure repository '$name': " +
+                                "no trusted fingerprints available"
+                    }
                 }
-                (tmpRepoConfDir / name).writeText(
-                    config.copy(
-                        fingerPrints = Path("/") / pkgFingerPrintsDir
-                    ).toUcl()
-                )
+                (tmpRepoConfDir / name).writeText(config.toUcl())
             }
         }
 
@@ -554,7 +554,7 @@ class PkgbuildPipeline(
                     listOf("fetch", "--quiet", "-y", "ca_root_nss")
                 )
                 val name = runPkgSearchVersion(
-                    jailPkgOptions, "ca_root_nss", "FreeBSD"
+                    jailPkgOptions, "ca_root_nss", "FreeBSD-ports"
                 )
                 val pkg = jailPkgCacheRoot / pkgCacheDir / "$name.pkg"
                 if (pkg.exists(LinkOption.NOFOLLOW_LINKS)) {
@@ -858,7 +858,7 @@ class PkgbuildPipeline(
     private fun runPkgSearchVersion(
         pkgOptions: PkgConfig.PkgOptions,
         name: String,
-        repository: String = "FreeBSD"
+        repository: String = "FreeBSD-ports"
     ): String {
         val pb = runPkgProcessBuilder(
             pkgOptions,

@@ -10,8 +10,6 @@ import kotlin.io.path.*
 
 class PkgConfig(
     val pkgSite: String,
-    val pkgKeys: Path?,
-    val basePkgKeys: Path? = null,
     val basePkgDir: String?,
     val portPkgDir: String,
     val pkgCacheRoot: Path,
@@ -20,6 +18,7 @@ class PkgConfig(
     private val pkgRepoConfDir: Path = Path("etc/pkg/repos")
     private val pkgCacheDir = Path("var/cache/pkg")
     private val pkgDbDir = Path("var/db/pkg")
+    private val pkgFingerPrintsDirPath = Path("/usr/share/keys/pkg")
 
     data class RepoConfig(
         val name: String,
@@ -98,18 +97,28 @@ class PkgConfig(
     }
 
     private fun generateConfigFiles(): Map<String, RepoConfig> = buildMap {
+        // Repo configs are written into the jail's /usr/local/etc/pkg/repos/ so
+        // they override the stock /etc/pkg/FreeBSD.conf: pkg's REPOS_DIR searches
+        // /etc/pkg/ then /usr/local/etc/pkg/repos/ and overwrites same-named
+        // repos, so these repo names/urls/fingerprints take precedence.
+        // ${ABI}, ${VERSION_*} are left literal for pkg to expand at runtime.
+        this += "FreeBSD-ports.conf" to RepoConfig(
+            name = "FreeBSD-ports",
+            url = $$"pkg+https://$${pkgSite}/${ABI}/$${portPkgDir}",
+            fingerPrints = pkgFingerPrintsDirPath
+        )
+        this += "FreeBSD-ports-kmods.conf" to RepoConfig(
+            name = "FreeBSD-ports-kmods",
+            url = $$"pkg+https://$${pkgSite}/${ABI}/kmods_latest_${VERSION_MINOR}",
+            fingerPrints = pkgFingerPrintsDirPath
+        )
         if (basePkgDir != null) {
             this += "FreeBSD-base.conf" to RepoConfig(
                 name = "FreeBSD-base",
-                url = $$"pkg+https://$$pkgSite/${ABI}/$$basePkgDir",
-                fingerPrints = basePkgKeys ?: pkgKeys
+                url = $$"pkg+https://$${pkgSite}/${ABI}/$${basePkgDir}",
+                fingerPrints = Path($$"/usr/share/keys/pkgbase-${VERSION_MAJOR}")
             )
         }
-        this += "FreeBSD.conf" to RepoConfig(
-            name = "FreeBSD",
-            url = $$"pkg+https://$$pkgSite/${ABI}/$$portPkgDir",
-            fingerPrints = pkgKeys
-        )
         val localRepo = pkgCacheRoot / "local"
         if (!repoIsEmpty(localRepo)) {
             this += "local.conf" to RepoConfig(

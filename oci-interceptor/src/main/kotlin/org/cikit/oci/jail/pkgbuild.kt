@@ -167,12 +167,6 @@ class PkgbuildCommand : CliktCommand("pkgbuild") {
 
         val pkgSite = System.getenv("PKGBUILD_SITE") ?: pkgSiteDefault
         val pkgKeys = System.getenv("PKGBUILD_KEYS") ?: pkgKeysDefault
-        val jailMajor = jailAbi.substringAfter(':', "").substringBefore(':')
-        val basePkgKeys = System.getenv("PKGBUILD_BASE_KEYS")
-            ?.let(::Path)
-            ?: Path("/usr/share/keys/pkgbase-$jailMajor")
-                .takeIf { it.exists() }
-                ?: Path(pkgKeys)
 
         val source = (src as? Path)
             ?.let { PkgbuildPipeline.Source.Root(it) }
@@ -190,7 +184,6 @@ class PkgbuildCommand : CliktCommand("pkgbuild") {
             hostPatchVersion = patch,
             hostArch = arch,
             jailAbi = jailAbi,
-            basePkgKeys = basePkgKeys,
             jailBasePkgDir = jailBase,
             interceptRcJail = interceptRcJail,
             pkgOptions = args,

@@ -9,9 +9,9 @@ fi
 
 ./bin/pkgbuild.sh -P --from scratch --mount .:/src \
   install -y \
-      FreeBSD-runtime FreeBSD-caroot FreeBSD-zoneinfo FreeBSD-openssl \
+      FreeBSD-runtime FreeBSD-zoneinfo FreeBSD-openssl \
   --then install -y \
-      FreeBSD-certctl FreeBSD-src FreeBSD-src-sys \
+      FreeBSD-caroot FreeBSD-certctl FreeBSD-src FreeBSD-src-sys \
       FreeBSD-runtime FreeBSD-utilities FreeBSD-rc FreeBSD-mtree \
       FreeBSD-fetch FreeBSD-clang FreeBSD-lld FreeBSD-bmake \
       FreeBSD-clang-dev FreeBSD-clibs-dev FreeBSD-runtime-dev \

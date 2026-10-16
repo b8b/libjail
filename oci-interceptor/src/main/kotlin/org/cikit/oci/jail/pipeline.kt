@@ -27,6 +27,7 @@ class PkgbuildPipeline(
     val pkgCacheBase: Path,
     val pkgSite: String,
     val pkgKeys: Path?,
+    val basePkgKeys: Path?,
     val hostMajorVersion: Int,
     val hostMinorVersion: Int,
     val hostPatchVersion: Int,
@@ -45,8 +46,15 @@ class PkgbuildPipeline(
 
     private val jailPkgCacheRoot = pkgCacheBase / jailAbi.replace(":", "-")
 
+    private val jailMajor =
+        jailAbi.substringAfter(':', "").substringBefore(':')
+    private val jailBaseFingerPrintsDir = basePkgKeys
+        ?.let { Path(it.pathString.trimStart('/')) }
+        ?: Path("usr/share/keys/pkgbase-$jailMajor")
+
     private val jailPkgConfig = PkgConfig(
         pkgSite = pkgSite,
+        basePkgKeys = basePkgKeys ?: (Path("/") / jailBaseFingerPrintsDir),
         basePkgDir = jailBasePkgDir,
         portPkgDir = portPkgDir,
         pkgCacheRoot = jailPkgCacheRoot
@@ -312,14 +320,6 @@ class PkgbuildPipeline(
         val tmpPkgCacheDir = createMountPoint(realTmpDir, pkgCacheDir)
         val tmpRepoConfDir = createMountPoint(realTmpDir, pkgRepoConfDir)
         val tmpLocalRepoDir = createMountPoint(realTmpDir, pkgLocalRepoDir)
-        val tmpTrustedDir = createMountPoint(
-            realTmpDir,
-            Path("$pkgFingerPrintsDir/trusted")
-        )
-        val tmpRevokedDir = createMountPoint(
-            realTmpDir,
-            Path("$pkgFingerPrintsDir/revoked")
-        )
         val tmpEtcDir = createMountPoint(realTmpDir, Path("etc"))
         val tmpEtcLocalDir = createMountPoint(realTmpDir, Path("usr/local/etc"))
         val tmpResolvConf = tmpEtcDir / "resolv.conf"
@@ -341,29 +341,20 @@ class PkgbuildPipeline(
         )
 
         // setup pkg repos
-        pkgKeys?.let { p ->
-            val trusted = (p / "trusted").listDirectoryEntries().map {
-                it.name
-            }.toSet()
-            for (entry in tmpTrustedDir.listDirectoryEntries()) {
-                if (entry.name !in trusted) {
-                    entry.deleteIfExists()
-                }
-            }
-            for (entry in trusted) {
-                (p / "trusted" / entry).copyTo(
-                    target = tmpTrustedDir / entry,
-                    overwrite = true
+        val haveTrusted = pkgKeys?.let { p ->
+            populateFingerPrints(realTmpDir, p, pkgFingerPrintsDir)
+        } ?: false
+        basePkgKeys?.let { p ->
+            logger.info("populating base fingerprints from '$p'")
+            val haveBaseTrusted =
+                populateFingerPrints(realTmpDir, p, jailBaseFingerPrintsDir)
+            if (!haveBaseTrusted &&
+                jailPkgOptions.repoConfigFiles.containsKey("FreeBSD-base.conf")
+            ) {
+                logger.warn(
+                    "no trusted FreeBSD-base fingerprints found in '$p'"
                 )
             }
-            if ((p / "revoked").exists()) {
-                for (f in (p / "revoked").listDirectoryEntries()) {
-                    f.copyTo(tmpRevokedDir / f.fileName, overwrite = true)
-                }
-            }
-        }
-        val haveTrusted = tmpTrustedDir.listDirectoryEntries().any {
-            !it.isDirectory() && it.isReadable()
         }
         nmount("tmpfs", tmpRepoConfDir)
         // Write the generated repo configs (FreeBSD-ports, FreeBSD-ports-kmods,
@@ -449,6 +440,45 @@ class PkgbuildPipeline(
         }
     }
 
+    private fun populateFingerPrints(
+        realTmpDir: Path,
+        source: Path,
+        targetFingerPrintsDir: Path
+    ): Boolean {
+        val trustedDir = createMountPoint(
+            realTmpDir,
+            targetFingerPrintsDir / "trusted"
+        )
+        val revokedDir = createMountPoint(
+            realTmpDir,
+            targetFingerPrintsDir / "revoked"
+        )
+        val trusted = (source / "trusted")
+            .takeIf { it.exists() }
+            ?.listDirectoryEntries()
+            ?.filter { it.isReadable() }
+            ?.map { it.name }
+            ?.toSet()
+            ?: emptySet()
+        for (entry in trustedDir.listDirectoryEntries()) {
+            if (entry.name !in trusted) {
+                entry.deleteIfExists()
+            }
+        }
+        for (entry in trusted) {
+            (source / "trusted" / entry).copyTo(
+                target = trustedDir / entry,
+                overwrite = true
+            )
+        }
+        if ((source / "revoked").exists()) {
+            for (f in (source / "revoked").listDirectoryEntries()) {
+                f.copyTo(revokedDir / f.fileName, overwrite = true)
+            }
+        }
+        return trusted.isNotEmpty()
+    }
+
     private fun prepareRoot(root: Path) {
         createMountPoint(root, Path("dev"))
         val etcMp = createMountPoint(root, Path("etc"))
@@ -460,7 +490,6 @@ class PkgbuildPipeline(
         if (!rootCertPem.exists(LinkOption.NOFOLLOW_LINKS)) {
             bootstrapCaBundle(root)
         }
-        val usrBinMp = createMountPoint(root, Path("usr/bin"))
         val varDbMp = createMountPoint(root, Path("var/db"))
         createMountPoint(root, pkgDbDir / "repos")
         createMountPoint(root, pkgCacheDir)
@@ -482,17 +511,6 @@ class PkgbuildPipeline(
                 "FreeBSD-base"
             )
             jailPkgCacheRoot / pkgCacheDir / "$pkgName.pkg"
-        }
-
-        // pkg want's to read ABI from /usr/bin/uname (via elf parser)
-        val rootUname = usrBinMp / "uname"
-        if (!rootUname.exists()) {
-            ProcessBuilder(
-                "tar",
-                "-C", usrBinMp.pathString,
-                "-xpf", runtimePkg.pathString,
-                "-s", "|^/usr/bin/||", "/usr/bin/uname"
-            ).exec()
         }
 
         val rootGroupDb = etcMp / "group"

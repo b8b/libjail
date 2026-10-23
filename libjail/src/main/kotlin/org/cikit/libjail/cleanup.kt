@@ -4,6 +4,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.time.Duration.Companion.seconds
 
 suspend fun cleanup(
     jail: JailParameters,
@@ -12,7 +13,7 @@ suspend fun cleanup(
     var rcAll = 0
 
     try {
-        withTimeout(30_000L) {
+        withTimeout(30.seconds) {
             trace(TraceEvent.Info("killing processes"))
             kill(jail)
         }

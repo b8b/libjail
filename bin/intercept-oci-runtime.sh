@@ -30,7 +30,7 @@ export INTERCEPT_OCI_STATE_DIR="$ROOTDIR"/tmp
 #   |_|\_\___/ \__|_|_|_| |_| |___/\___|_|  |_| .__/ \__|
 #                         ______              | |
 #                        |______|             |_|
-v=2.3.0.33
+v=2.4.0.34
 p=org/cikit/kotlin_script/"$v"/kotlin_script-"$v".sh
 url="${M2_CENTRAL_REPO:=https://repo1.maven.org/maven2}"/"$p"
 kotlin_script_sh="${M2_LOCAL_REPO:-"$HOME"/.m2/repository}"/"$p"
@@ -45,7 +45,7 @@ if ! [ -r "$kotlin_script_sh" ]; then
   fi
   dgst_cmd="$(command -v openssl) dgst -sha256 -r" || dgst_cmd=sha256sum
   case "$($dgst_cmd < "$kotlin_script_sh")" in
-  "bef2250e52a4ed3e912746d446e7d78acad30c790a4553eb365a5ec5d61f702f "*) ;;
+  "b09dba200ac10d4a14789922c6d6322bd9afa754df681e6e6c75c1b1fabd88a2 "*) ;;
   *) echo "error: failed to verify kotlin_script.sh" >&2
      rm -f "$kotlin_script_sh"; exit 1;;
   esac
@@ -54,19 +54,19 @@ fi
 
 ///PLUGIN=org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable
 
-///DEP=org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2
+///DEP=org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0
 
-///DEP=org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.9.0
-///DEP=org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0
+///DEP=org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.12.0
+///DEP=org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.12.0
 
-///DEP=net.vieiro:toml-java:13.4.2
+///DEP=net.vieiro:toml-java:13.5.1
 ///DEP=org.antlr:antlr4-runtime:4.13.1
 
-///DEP=org.cikit:forte-jvm:0.8.1
+///DEP=org.cikit:forte-jvm:0.8.2
 ///DEP=org.jetbrains.kotlinx:kotlinx-io-bytestring-jvm:0.8.0
 ///DEP=org.jetbrains.kotlinx:kotlinx-collections-immutable-jvm:0.4.0
 
-///DEP=com.github.seancfoley:ipaddress:5.5.1
+///DEP=com.github.seancfoley:ipaddress:5.6.2
 
 ///DEP=com.github.ajalt.clikt:clikt-jvm:5.1.0
 ///DEP=com.github.ajalt.clikt:clikt-core-jvm:5.1.0
@@ -74,7 +74,7 @@ fi
 ///DEP=com.github.ajalt.mordant:mordant-core-jvm:3.0.2
 ///DEP=com.github.ajalt.colormath:colormath-jvm:3.6.0
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-jna-jvm:3.0.2
-///DEP=net.java.dev.jna:jna:5.15.0
+///DEP=net.java.dev.jna:jna:5.19.1
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-ffm-jvm:3.0.2
 ///RDEP=com.github.ajalt.mordant:mordant-jvm-graal-ffi-jvm:3.0.2
 

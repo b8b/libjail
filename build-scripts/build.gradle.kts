@@ -10,8 +10,8 @@ java {
 }
 
 dependencies {
-    api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
-    api("org.cikit:kotlin_script:2.3.0.33")
-    api("net.java.dev.jna:jna:5.15.0")
+    api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
+    api("org.cikit:kotlin_script:2.4.0.34")
+    api("net.java.dev.jna:jna:5.19.1")
 }

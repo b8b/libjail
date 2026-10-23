@@ -1,4 +1,6 @@
 module kotlinx.collections.immutable {
+    requires transitive kotlin.stdlib;
+
     exports kotlinx.collections.immutable;
     exports kotlinx.collections.immutable.adapters;
     exports kotlinx.collections.immutable.implementations.immutableList;

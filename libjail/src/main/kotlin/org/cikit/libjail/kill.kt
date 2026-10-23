@@ -3,6 +3,7 @@ package org.cikit.libjail
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 
 suspend fun kill(jail: JailParameters, signal: String = "-9") {
     var requireKill = false
@@ -14,7 +15,7 @@ suspend fun kill(jail: JailParameters, signal: String = "-9") {
         pRead(listOf("killall", "-q", "-j", jail.name, signal))
         var done = false
         while (!done) {
-            delay(250L)
+            delay(250.milliseconds)
             withContext(Dispatchers.IO) {
                 pRead(checkArgs) { _, rc, _ ->
                     done = rc != 0

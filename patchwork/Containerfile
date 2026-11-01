@@ -1,0 +1,50 @@
+ARG BASE_IMAGE=ghcr.io/freebsd/freebsd-runtime:15.1
+FROM ${BASE_IMAGE}
+
+RUN pkg install -y FreeBSD-utilities FreeBSD-pf conmon gpgme containers-common containernetworking-plugins && \
+    pkg delete -fy python312 py312-packaging && \
+    pkg autoremove -y && \
+    pkg clean -y && \
+    pkg delete -fy pkg && \
+    rm -f /usr/local/bin/glib-mkenums /usr/local/bin/glib-genmarshal \
+        /usr/local/bin/gdbus-codegen /usr/local/bin/gtester-report \
+        /usr/local/bin/gi-compile-repository /usr/local/bin/gi-decompile-typelib \
+        /usr/local/bin/gi-inspect-typelib /usr/local/bin/gtester \
+        /usr/local/bin/glib-gettextize /usr/local/bin/gresource \
+        /usr/local/bin/gsettings /usr/local/bin/gapplication \
+        /usr/local/bin/gdbus /usr/local/bin/gio \
+        /usr/local/bin/gio-querymodules /usr/local/bin/gobject-query \
+        /usr/local/bin/glib-compile-resources \
+        /usr/local/bin/glib-compile-schemas && \
+    rm -Rf /usr/local/include/glib-2.0 /usr/local/include/gio-unix-2.0 \
+        /usr/local/lib/glib-2.0/include /usr/local/lib/girepository-1.0 \
+        /usr/local/share/gir-1.0 /usr/local/share/glib-2.0 \
+        /usr/local/share/aclocal /usr/local/share/man && \
+    rm -f /usr/local/lib/*.a /usr/local/lib/*.la \
+        /usr/local/libdata/pkgconfig/glib-2.0.pc \
+        /usr/local/libdata/pkgconfig/gio-2.0.pc \
+        /usr/local/libdata/pkgconfig/gio-unix-2.0.pc \
+        /usr/local/libdata/pkgconfig/giomodule.pc \
+        /usr/local/libdata/pkgconfig/gmodule-2.0.pc \
+        /usr/local/libdata/pkgconfig/gmodule-no-export-2.0.pc \
+        /usr/local/libdata/pkgconfig/gmodule-export-2.0.pc \
+        /usr/local/libdata/pkgconfig/gobject-2.0.pc \
+        /usr/local/libdata/pkgconfig/gthread-2.0.pc && \
+    rm -Rf /var/cache/pkg /var/db/pkg/repos /usr/local/share/doc
+
+ADD bin/ocijail /usr/local/bin/ocijail
+ADD bin/podman /usr/local/bin/podman
+ADD bin/ngbridge /usr/local/bin/ngbridge
+ADD bin/ngbridge-cni /usr/local/libexec/cni/ngbridge-cni
+
+ADD storage.conf /usr/local/etc/containers/storage.conf
+ADD containers.conf /usr/local/etc/containers/containers.conf
+
+RUN mkdir -p /usr/local/etc/cni/net.d /var/db/containers/storage
+ADD bridge0.conflist /usr/local/etc/cni/net.d/bridge0.conflist
+
+ADD entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 755 /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["/bin/sh"]

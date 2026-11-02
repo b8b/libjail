@@ -128,6 +128,7 @@ podman --runtime "$here/bin/ocijail" \
         pkg-static install -y -r FreeBSD-base FreeBSD-certctl
         rm -Rf /rescue /usr/local/share /usr/local/sbin
         SSL_CA_CERT_FILE= certctl rehash
+        service ldconfig start
         freebsd-version -u > /var/cache/pkg/.freebsd-version"
 
 cid="$(cat "$cidfile")"

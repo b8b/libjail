@@ -2,31 +2,32 @@
 set -eu
 
 : "${BASE_IMAGE:=ghcr.io/freebsd/freebsd-toolchain:15.1}"
-: "${BOOTSTRAP_CONTAINER:=podman-bootstrap}"
-: "${BOOTSTRAP_JAIL:=podman-bootstrap}"
-: "${IMAGE:=podman}"
+: "${BUILD_IMAGE:=podman}"
 
 here=$(realpath "$(dirname "$0")")
 tree="$here"
 cd "$tree"
 
-: "${RUNTIME:=$here/bin/ocijail}"
-
-# Every buildah call uses this configuration: no runtime while building, CNI as
-# the network backend, and the helper directory the CNI plugins live in.
-export CONTAINERS_CONF="$here/containers-bootstrap.conf"
-
 log() { echo "build.sh: $*" >&2; }
 die() { echo "build.sh: $*" >&2; exit 1; }
 
+bootstrap_cid=
+bootstrap_jid=
+
 on_exit() {
-    status=$?
-    if [ "$status" -eq 0 ] || [ "${bootstrapped:-0}" != 1 ]; then
-        return
+    status="$?"
+    if [ -n "$bootstrap_jid" ]; then
+        jail -r "$bootstrap_jid"
+        umount -f "$root/dev"
     fi
-    log "build failed; left $BOOTSTRAP_JAIL on $BOOTSTRAP_CONTAINER in place"
-    log "remove them with: jail -r $BOOTSTRAP_JAIL; umount ${root:-<rootfs>}/dev;" \
-        "buildah rm $BOOTSTRAP_CONTAINER"
+    if [ -n "$bootstrap_cid" ]; then
+        if [ "$status" -eq 0 ]; then
+            podman rm "$bootstrap_cid"
+        else
+            log "build failed; left $bootstrap_cid in place"
+            log "remove with: podman rm $bootstrap_cid"
+        fi
+    fi
 }
 trap on_exit EXIT
 
@@ -38,7 +39,7 @@ check_os() {
 }
 
 check_chroot() {
-    # buildah and the OCI runtime call chroot(2) with directory descriptors
+    # podman calls chroot(2) with directory descriptors
     # still open, which only works with the value 2. It cannot be set from a
     # jail, and it is a host setting, so only report it.
     value=$(sysctl -n kern.chroot_allow_open_directories)
@@ -53,25 +54,9 @@ check_jail() {
         return
     fi
 
-    # A jailed process cannot query its own parameters, so ask the kernel: a
-    # child jail can only be created with parameters our jail has, and only if
-    # children.max is not zero. Probing one parameter at a time tells us exactly
-    # which ones are missing.
-    check_name=podman-build-check
-    jail -r "$check_name" >/dev/null 2>&1 || true
-
-    probe() {
-        if jid=$(jail -ci name="$check_name" path=/ persist "$@" 2>&1); then
-            jail -r "$jid" >/dev/null 2>&1 || true
-            return 0
-        fi
-        probe_error=$jid
-        return 1
-    }
-
-    if ! probe; then
+    if ! jail -c path=/ command=/usr/bin/true; then
         die "inside a jail that cannot create jails at all:" \
-            "$probe_error (children.max is 0, or the jail is not allowed to" \
+            " (children.max is 0, or the jail is not allowed to" \
             "create child jails)"
     fi
 
@@ -79,16 +64,18 @@ check_jail() {
     for allow in allow.mount allow.mount.devfs allow.mount.fdescfs \
             allow.mount.nullfs allow.mount.tmpfs allow.chflags \
             allow.raw_sockets; do
-        probe "$allow" || missing="${missing:+$missing }$allow"
+        if ! jail -c path=/ command=/usr/bin/true "$allow=true"; then
+            missing="${missing:+$missing }$allow"
+        fi
     done
     if [ -n "$missing" ]; then
         die "inside a jail that lacks the parameters a container build needs:" \
-            "$missing (add them to the jail's configuration, see" \
-            "examples/nested-podman/README.md for the set that is used there)"
+            "$missing (add them to the jail's configuration)"
     fi
 
-    probe allow.mount.zfs ||
-        log "note: no allow.mount.zfs; needed if buildah uses the zfs storage driver"
+    if ! jail -c path=/ command=/usr/bin/true allow.mount.zfs=true; then
+        log "note: no allow.mount.zfs; needed if podman uses the zfs storage driver"
+    fi
 }
 
 # check_sources reports whether the trees the build uses are there and match the
@@ -98,54 +85,43 @@ check_jail() {
 check_sources() {
     command -v git >/dev/null 2>&1 ||
         { log "note: git is not installed, cannot check the submodules"; return 0; }
-    [ -e "$here/.git" ] ||
-        { log "note: $here is not a git checkout, cannot check the submodules"; return 0; }
-    [ -f "$here/.gitmodules" ] || return 0
+    project=$(git -C "$here" rev-parse --show-toplevel 2>/dev/null) || project=
+    [ -n "$project" ] && [ -f "$project/.gitmodules" ] ||
+        { log "note: $here is not inside a git checkout, cannot check the submodules"; return 0; }
 
     missing=
-    for path in $(git -C "$here" config --file "$here/.gitmodules" --get-regexp '^submodule\..*\.path$' | awk '{ print $2 }'); do
-        state=$(git -C "$here" submodule status -- "$path" 2>/dev/null | cut -c1)
+    for path in $(git -C "$project" config --file "$project/.gitmodules" --get-regexp '^submodule\..*\.path$' | awk '{ print $2 }'); do
+        state=$(git -C "$project" submodule status -- "$path" 2>/dev/null | cut -c1)
         case "$state" in
         -) missing="${missing:+$missing }$path" ;;
         U) die "$path has a conflict, resolve it before building" ;;
-        +) log "warning: $path is not at the commit $here records" ;;
+        +) log "warning: $path is not at the commit $project records" ;;
         esac
-        if [ -n "$(git -C "$here/$path" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+        if [ -n "$(git -C "$project/$path" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
             log "warning: $path has uncommitted changes, they are what gets built"
         fi
     done
     [ -z "$missing" ] ||
-        die "submodule(s) not checked out:$missing (run: git submodule update --init --recursive)"
+        die "submodule(s) not checked out: $missing (run: git submodule update --init --recursive)"
 }
 
-check_buildah() {
-    command -v buildah >/dev/null 2>&1 ||
-        die "buildah not found (pkg install buildah)"
+check_podman() {
+    command -v podman >/dev/null 2>&1 || \
+        die "podman not found (pkg install podman)"
 }
 
 check_distfiles() {
     for archive in main.zip v2.3.2.zip include.zip; do
-        [ -f "ocijail/distfiles/$archive" ] ||
+        [ -f "ocijail/distfiles/$archive" ] || \
             die "ocijail/distfiles/$archive missing (run ./prefetch-deps.sh)"
     done
 }
 
-clean_bootstrap() {
-    jail -r "$BOOTSTRAP_JAIL" >/dev/null 2>&1 || true
-    if root=$(buildah mount "$BOOTSTRAP_CONTAINER" 2>/dev/null); then
-        umount "$root/dev" >/dev/null 2>&1 || true
-    fi
-    buildah rm "$BOOTSTRAP_CONTAINER" >/dev/null 2>&1 || true
-}
-
 bootstrap_rootfs() {
-    clean_bootstrap
-    buildah from --pull=always --quiet --name "$BOOTSTRAP_CONTAINER" \
-        "$BASE_IMAGE" >/dev/null
-
-    root=$(buildah mount "$BOOTSTRAP_CONTAINER")
+    bootstrap_cid="$(podman create --pull=always --quiet --network=none "$BASE_IMAGE")"
+    root="$(podman mount "$bootstrap_cid")"
     [ -n "$root" ] && [ -d "$root" ] ||
-        die "cannot mount $BOOTSTRAP_CONTAINER (with the zfs storage driver the" \
+        die "cannot mount $bootstrap_cid (with the zfs storage driver the" \
             "jail needs allow.mount.zfs)"
 
     # pkg inside the bootstrap rootfs needs working resolvers.
@@ -156,11 +132,16 @@ bootstrap_rootfs() {
 }
 
 prepare_jail() {
-    mount -t devfs devfs "$root/dev"
-    jail -c name="$BOOTSTRAP_JAIL" path="$root" persist ip4=inherit ip6=inherit
-    pkg -j "$BOOTSTRAP_JAIL" install -y bazel5 bash go gpgme gmake gnugrep pkgconf
+    jail_opt="persist ip4=inherit ip6=inherit"
+    if [ "$(sysctl -n security.jail.jailed)" != 1 ]; then
+        jail_opt="$jail_opt mount.devfs"
+    else
+        mount -t devfs devfs "$root/dev"
+    fi
+    bootstrap_jid="$(jail -ci path="$root" $jail_opt)"
+    pkg -j "$bootstrap_jid" install -y bazel5 bash go gpgme gmake gnugrep pkgconf
 
-    log "bootstrap jail $BOOTSTRAP_JAIL ready on $root"
+    log "bootstrap jail $bootstrap_jid ready on $root"
 }
 
 copy_sources() {
@@ -207,7 +188,7 @@ build_podman() {
     # copy_sources preserves the mtime of a binary left in the checkout. A stale
     # one would be installed as it is, without the cni tag, and fail at run time
     # with "could not find netavark".
-    jexec "$BOOTSTRAP_JAIL" /bin/sh -c "rm -f $src/bin/podman"
+    jexec "$bootstrap_jid" /bin/sh -c "rm -f $src/bin/podman"
 
     # The copy in the jail carries no usable git directory, so the version would
     # be empty; hand the pinned commit over instead.
@@ -220,17 +201,17 @@ build_podman() {
 
     # The Makefile adds the cni tag on FreeBSD by itself; passing it again keeps
     # a build with a different GOOS from losing the only backend that works here.
-    jexec "$BOOTSTRAP_JAIL" /usr/bin/env \
+    jexec "$bootstrap_jid" /usr/bin/env \
         HOME=/root PATH=/usr/local/bin:/usr/bin:/bin \
         /bin/sh -c "cd $src && gmake podman $make_flags"
-    jexec "$BOOTSTRAP_JAIL" /bin/sh -c \
+    jexec "$bootstrap_jid" /bin/sh -c \
         "cp $src/bin/podman /root/podman"
     # Without the cni tag podman only has the netavark backend, which does not
     # exist on FreeBSD, and every network setup fails at run time with
     # "could not find netavark". The tags end up in the binary, so check them.
-    jexec "$BOOTSTRAP_JAIL" go version -m /root/podman |
+    jexec "$bootstrap_jid" go version -m /root/podman |
         grep -q -- '-tags=[^[:space:]]*cni' ||
-        die "podman was built without the cni tag: $(jexec "$BOOTSTRAP_JAIL" go version -m /root/podman | grep -- '-tags=' || true)"
+        die "podman was built without the cni tag: $(jexec "$bootstrap_jid" go version -m /root/podman | grep -- '-tags=' || true)"
     mkdir -p "$here/bin"
     install -m 755 "$root/root/podman" "$here/bin/podman"
     log "built $here/bin/podman"
@@ -239,10 +220,10 @@ build_podman() {
 build_ocijail() {
     src=/usr/src/ocijail
 
-    jexec "$BOOTSTRAP_JAIL" /usr/bin/env \
+    jexec "$bootstrap_jid" /usr/bin/env \
         HOME=/root PATH=/usr/local/bin:/usr/bin:/bin \
         /bin/sh -c "cd $src/ocijail && exec bazel build --workspace_status_command=/usr/bin/true //ocijail:ocijail"
-    jexec "$BOOTSTRAP_JAIL" /bin/sh -c \
+    jexec "$bootstrap_jid" /bin/sh -c \
         "cp $src/bazel-bin/ocijail/ocijail /root/ocijail"
     [ -f "$root/root/ocijail" ] ||
         die "bazel did not produce $src/bazel-bin/ocijail/ocijail"
@@ -254,12 +235,16 @@ build_ocijail() {
 build_ngbridge() {
     src=/usr/src/ngbridge
 
-    jexec "$BOOTSTRAP_JAIL" /usr/bin/env \
+    jexec "$bootstrap_jid" /usr/bin/env \
         HOME=/root PATH=/usr/local/bin:/usr/bin:/bin \
-        /bin/sh -c "cd $src && go build -o ngbridge . && go build -o ngbridge-cni ./cmd/ngbridge-cni"
+        /bin/sh -c "cd $src && \
+            go build -o ngbridge . && \
+            go build -o ngbridge-cni ./cmd/ngbridge-cni && \
+            go build -o netavark ./cmd/ngbridge-netavark"
     mkdir -p "$here/bin"
     install -m 755 "$root/usr/src/ngbridge/ngbridge" "$here/bin/ngbridge"
     install -m 755 "$root/usr/src/ngbridge/ngbridge-cni" "$here/bin/ngbridge-cni"
+    install -m 755 "$root/usr/src/ngbridge/netavark" "$here/bin/netavark"
     log "built $here/bin/ngbridge"
 }
 
@@ -267,16 +252,17 @@ build_image() {
     # The image only adds the binary built above; its RUN step needs a runtime,
     # which is the one we just built unless RUNTIME says otherwise. Its base
     # image comes from the Containerfile's ARG, not from BASE_IMAGE.
-    "$here/bin/podman" --runtime "$RUNTIME" build \
-        -f "$here/Containerfile" -t "$IMAGE" "$here"
-    log "built image $IMAGE"
+    podman \
+        --runtime "$here/bin/ocijail" build --network host \
+        -f "$here/Containerfile" -t "$BUILD_IMAGE" "$here"
+    log "built image $BUILD_IMAGE"
 }
 
 check_os
 check_chroot
 check_jail
 check_sources
-check_buildah
+check_podman
 check_distfiles
 
 log "bootstrap base image $BASE_IMAGE"
@@ -287,18 +273,16 @@ use_container_libs
 build_podman
 build_ocijail
 build_ngbridge
-# Only reached when the build above succeeded (set -e), so this is the point to
-# throw the bootstrap rootfs away.
-clean_bootstrap
-build_image
 
-# The command goes to stdout, unprefixed, so it can be copied; everything else
-# this script says is on stderr.
-log "run the image with:"
-cat <<EOT
-CONTAINERS_CONF=$here/containers-bootstrap.conf \
-"$here/bin/podman" \\
-    --runtime $RUNTIME \\
+if [ -n "$BUILD_IMAGE" ]; then
+    build_image
+
+    # The command goes to stdout, unprefixed, so it can be copied; everything else
+    # this script says is on stderr.
+    log "run the image with:"
+    cat <<EOT
+podman \\
+    --runtime "$here/bin/ocijail" \\
     --hooks-dir $here/ocijail/examples/nested-podman/hooks.d \\
     run --rm -it \\
     --annotation org.freebsd.jail.vnet=new \\
@@ -310,5 +294,20 @@ CONTAINERS_CONF=$here/containers-bootstrap.conf \
     --annotation org.freebsd.jail.allow.chflags=true \\
     --annotation org.freebsd.jail.children.max=8 \\
     --device /dev/pf \\
-    $IMAGE
+    $BUILD_IMAGE
 EOT
+fi
+
+local_network="$(CONTAINERS_HELPER_BINARY_DIR="$here/bin" "$here/bin/podman" info --format '{{.Host.NetworkBackend}}')"
+system_network="$local_network"
+
+if system_podman="$(command -v podman)"; then
+    system_network="$("$system_podman" info --format '{{.Host.NetworkBackend}}')"
+    echo -n "system podman: "
+    "$system_podman" --version
+    echo "system network: $system_network"
+fi
+
+echo -n "local podman: "
+"$here/bin/podman" --version
+echo "local network: $local_network"

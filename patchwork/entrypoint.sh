@@ -11,6 +11,86 @@ if [ -z "$egress" ]; then
 fi
 : "${egress:=eth0}"
 
+default_subnet="${NETWORK_SUBNET:-10.89.0.0/16}"
+default_network_backend=cni
+network_backend="${NETWORK_BACKEND:-$default_network_backend}"
+
+cat > /usr/local/etc/containers/containers.conf <<EOF
+[engine]
+runtime = "ocijail"
+runtime_supports_json = ["ocijail"]
+
+[engine.runtimes]
+ocijail = ["/usr/local/bin/ocijail"]
+
+[network]
+network_backend = "$network_backend"
+default_subnet = "$default_subnet"
+EOF
+
+if [ "$network_backend" = "cni" ]; then
+    #TODO implement cni-config-gen in ngbridge
+    cni_type=bridge
+    network="${default_subnet%/*}"
+    network="${network%.*}"
+    gateway="$network".1
+    range_start="$network".21
+    range_end="$network".199
+    if kldstat -qm netgraph; then
+        cni_type=ngbridge-cni
+    fi
+
+    mkdir -p /usr/local/etc/cni/net.d
+    cat > /usr/local/etc/cni/net.d/podman.conflist <<EOF
+{
+  "cniVersion": "1.0.0",
+  "name": "podman",
+  "plugins": [
+    {
+      "type": "loopback"
+    },
+    {
+      "type": "$cni_type",
+      "bridge": "cni-podman0",
+      "isGateway": true,
+      "ipMasq": true,
+      "ipam": {
+        "type": "host-local",
+        "routes": [
+          {
+            "dst": "0.0.0.0/0"
+          }
+        ],
+        "ranges": [
+          [
+            {
+              "subnet": "$default_subnet",
+              "rangeStart": "$range_start",
+              "rangeEnd": "$range_end",
+              "gateway": "$gateway"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "portmap",
+      "capabilities": {
+        "portMappings": true
+      }
+    },
+    {
+      "type": "firewall",
+      "backend": ""
+    },
+    {
+      "type": "tuning"
+    }
+  ]
+}
+EOF
+fi
+
 cat > /etc/pf.conf <<EOF
 # Written by /usr/local/bin/entrypoint.sh
 set skip on lo0

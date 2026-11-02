@@ -37,14 +37,15 @@ ADD bin/podman /usr/local/bin/podman
 ADD bin/ngbridge /usr/local/bin/ngbridge
 ADD bin/ngbridge-cni /usr/local/libexec/cni/ngbridge-cni
 
-ADD storage.conf /usr/local/etc/containers/storage.conf
-ADD containers.conf /usr/local/etc/containers/containers.conf
+RUN mkdir /usr/local/libexec/podman /var/run/ocijail
+ADD bin/netavark /usr/local/libexec/podman/netavark
 
-RUN mkdir -p /usr/local/etc/cni/net.d /var/db/containers/storage
-ADD bridge0.conflist /usr/local/etc/cni/net.d/bridge0.conflist
+ADD storage.conf /usr/local/etc/containers/storage.conf
 
 ADD entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
+RUN [ "$(podman --network-backend cni info --format '{{.Host.NetworkBackend}}' 2>/dev/null)" = "cni" ] || \
+    sed -ie 's/default_network_backend=cni/default_network_backend=netavark/' /usr/local/bin/entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["/bin/sh"]

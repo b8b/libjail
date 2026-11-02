@@ -2,3 +2,6 @@
 buildah/
 container-libs/
 podman/
+
+/*.txz
+/*.pkg

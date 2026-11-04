@@ -1,11 +1,11 @@
 [submodule "patchwork/container-libs"]
 	path = patchwork/container-libs
 	url = https://github.com/b8b/container-libs
-	branch = podman-5.8
+	branch = main
 [submodule "patchwork/podman"]
 	path = patchwork/podman
 	url = https://github.com/b8b/podman
-	branch = v5.8
+	branch = main
 [submodule "patchwork/ocijail"]
 	path = patchwork/ocijail
 	url = https://github.com/b8b/ocijail

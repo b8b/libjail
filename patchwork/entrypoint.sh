@@ -47,9 +47,6 @@ if [ "$network_backend" = "cni" ]; then
   "name": "podman",
   "plugins": [
     {
-      "type": "loopback"
-    },
-    {
       "type": "$cni_type",
       "bridge": "cni-podman0",
       "isGateway": true,

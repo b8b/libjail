@@ -1,9 +1,6 @@
 #!/bin/sh
 set -eu
 
-: "${BASE_IMAGE:=ghcr.io/freebsd/freebsd-toolchain:15.1}"
-: "${BUILD_IMAGE:=podman}"
-
 here=$(realpath "$(dirname "$0")")
 tree="$here"
 cd "$tree"
@@ -13,12 +10,13 @@ die() { echo "build.sh: $*" >&2; exit 1; }
 
 bootstrap_cid=
 bootstrap_jid=
+jail_root=
 
 on_exit() {
     status="$?"
     if [ -n "$bootstrap_jid" ]; then
         jail -r "$bootstrap_jid"
-        umount -f "$root/dev"
+        umount -f "$jail_root/dev"
     fi
     if [ -n "$bootstrap_cid" ]; then
         if [ "$status" -eq 0 ]; then
@@ -30,53 +28,6 @@ on_exit() {
     fi
 }
 trap on_exit EXIT
-
-check_os() {
-    osreldate=$(sysctl -n kern.osreldate)
-    if [ "$osreldate" -lt 1501000 ]; then
-        die "FreeBSD 15.1 or later required (kern.osreldate is $osreldate)"
-    fi
-}
-
-check_chroot() {
-    # podman calls chroot(2) with directory descriptors
-    # still open, which only works with the value 2. It cannot be set from a
-    # jail, and it is a host setting, so only report it.
-    value=$(sysctl -n kern.chroot_allow_open_directories)
-    [ "$value" = 2 ] ||
-        die "kern.chroot_allow_open_directories is $value, must be 2" \
-            "(set it on the host: sysctl kern.chroot_allow_open_directories=2," \
-            "and keep it in /etc/sysctl.conf; this script will not change it)"
-}
-
-check_jail() {
-    if [ "$(sysctl -n security.jail.jailed)" != 1 ]; then
-        return
-    fi
-
-    if ! jail -c path=/ command=/usr/bin/true; then
-        die "inside a jail that cannot create jails at all:" \
-            " (children.max is 0, or the jail is not allowed to" \
-            "create child jails)"
-    fi
-
-    missing=
-    for allow in allow.mount allow.mount.devfs allow.mount.fdescfs \
-            allow.mount.nullfs allow.mount.tmpfs allow.chflags \
-            allow.raw_sockets; do
-        if ! jail -c path=/ command=/usr/bin/true "$allow=true"; then
-            missing="${missing:+$missing }$allow"
-        fi
-    done
-    if [ -n "$missing" ]; then
-        die "inside a jail that lacks the parameters a container build needs:" \
-            "$missing (add them to the jail's configuration)"
-    fi
-
-    if ! jail -c path=/ command=/usr/bin/true allow.mount.zfs=true; then
-        log "note: no allow.mount.zfs; needed if podman uses the zfs storage driver"
-    fi
-}
 
 # check_sources reports whether the trees the build uses are there and match the
 # commits the superproject records. The build copies the worktrees, not the
@@ -105,11 +56,6 @@ check_sources() {
         die "submodule(s) not checked out: $missing (run: git submodule update --init --recursive)"
 }
 
-check_podman() {
-    command -v podman >/dev/null 2>&1 || \
-        die "podman not found (pkg install podman)"
-}
-
 check_distfiles() {
     for archive in main.zip v2.3.2.zip include.zip; do
         [ -f "ocijail/distfiles/$archive" ] || \
@@ -118,34 +64,35 @@ check_distfiles() {
 }
 
 bootstrap_rootfs() {
-    bootstrap_cid="$(podman create --pull=always --quiet --network=none "$BASE_IMAGE")"
-    root="$(podman mount "$bootstrap_cid")"
-    [ -n "$root" ] && [ -d "$root" ] ||
+    bootstrap_cid="$(podman create --quiet --network=none freebsd-minimal)"
+    jail_root="$(podman mount "$bootstrap_cid")"
+    [ -n "$jail_root" ] && [ -d "$jail_root" ] ||
         die "cannot mount $bootstrap_cid (with the zfs storage driver the" \
             "jail needs allow.mount.zfs)"
 
     # pkg inside the bootstrap rootfs needs working resolvers.
-    cp /etc/resolv.conf "$root/etc/resolv.conf"
+    cp /etc/resolv.conf "$jail_root/etc/resolv.conf"
 
     bootstrapped=1
-    log "bootstrap rootfs at $root"
+    log "bootstrap rootfs at $jail_root"
 }
 
 prepare_jail() {
-    jail_opt="persist ip4=inherit ip6=inherit"
+    jail_opt="persist allow.chflags ip4=inherit ip6=inherit"
     if [ "$(sysctl -n security.jail.jailed)" != 1 ]; then
         jail_opt="$jail_opt mount.devfs"
     else
-        mount -t devfs devfs "$root/dev"
+        mount -t devfs devfs "$jail_root/dev"
     fi
-    bootstrap_jid="$(jail -ci path="$root" $jail_opt)"
-    pkg -j "$bootstrap_jid" install -y bazel5 bash go gpgme gmake gnugrep pkgconf
+    bootstrap_jid="$(jail -ci path="$jail_root" $jail_opt)"
+    pkg -j "$bootstrap_jid" install -y \
+        FreeBSD-set-devel bazel5 bash go gpgme gmake gnugrep pkgconf
 
-    log "bootstrap jail $bootstrap_jid ready on $root"
+    log "bootstrap jail $bootstrap_jid ready on $jail_root"
 }
 
 copy_sources() {
-    src="$root/usr/src"
+    src="$jail_root/usr/src"
     mkdir -p "$src"/ocijail
     cp -a podman "$src/"
     cp -a container-libs "$src/"
@@ -164,7 +111,7 @@ copy_sources() {
 # added files. A new package would also need a line in vendor/modules.txt, so
 # that still wants a "go mod vendor" on the host.
 use_container_libs() {
-    src="$root/usr/src"
+    src="$jail_root/usr/src"
     [ -d "$src/container-libs" ] || return 0
     for module_dir in "$src/container-libs"/*/; do
         [ -f "${module_dir}go.mod" ] || continue
@@ -213,7 +160,7 @@ build_podman() {
         grep -q -- '-tags=[^[:space:]]*cni' ||
         die "podman was built without the cni tag: $(jexec "$bootstrap_jid" go version -m /root/podman | grep -- '-tags=' || true)"
     mkdir -p "$here/bin"
-    install -m 755 "$root/root/podman" "$here/bin/podman"
+    install -m 755 "$jail_root/root/podman" "$here/bin/podman"
     log "built $here/bin/podman"
 }
 
@@ -225,10 +172,10 @@ build_ocijail() {
         /bin/sh -c "cd $src/ocijail && exec bazel build --workspace_status_command=/usr/bin/true //ocijail:ocijail"
     jexec "$bootstrap_jid" /bin/sh -c \
         "cp $src/bazel-bin/ocijail/ocijail /root/ocijail"
-    [ -f "$root/root/ocijail" ] ||
+    [ -f "$jail_root/root/ocijail" ] ||
         die "bazel did not produce $src/bazel-bin/ocijail/ocijail"
     mkdir -p "$here/bin"
-    install -m 755 "$root/root/ocijail" "$here/bin/ocijail"
+    install -m 755 "$jail_root/root/ocijail" "$here/bin/ocijail"
     log "built $here/bin/ocijail"
 }
 
@@ -242,30 +189,15 @@ build_ngbridge() {
             go build -o ngbridge-cni ./cmd/ngbridge-cni && \
             go build -o netavark ./cmd/ngbridge-netavark"
     mkdir -p "$here/bin"
-    install -m 755 "$root/usr/src/ngbridge/ngbridge" "$here/bin/ngbridge"
-    install -m 755 "$root/usr/src/ngbridge/ngbridge-cni" "$here/bin/ngbridge-cni"
-    install -m 755 "$root/usr/src/ngbridge/netavark" "$here/bin/netavark"
+    install -m 755 "$jail_root/usr/src/ngbridge/ngbridge" "$here/bin/ngbridge"
+    install -m 755 "$jail_root/usr/src/ngbridge/ngbridge-cni" "$here/bin/ngbridge-cni"
+    install -m 755 "$jail_root/usr/src/ngbridge/netavark" "$here/bin/netavark"
     log "built $here/bin/ngbridge"
 }
 
-build_image() {
-    # The image only adds the binary built above; its RUN step needs a runtime,
-    # which is the one we just built unless RUNTIME says otherwise. Its base
-    # image comes from the Containerfile's ARG, not from BASE_IMAGE.
-    podman \
-        --runtime "$here/bin/ocijail" build --network host \
-        -f "$here/Containerfile" -t "$BUILD_IMAGE" "$here"
-    log "built image $BUILD_IMAGE"
-}
-
-check_os
-check_chroot
-check_jail
 check_sources
-check_podman
 check_distfiles
 
-log "bootstrap base image $BASE_IMAGE"
 bootstrap_rootfs
 prepare_jail
 copy_sources
@@ -274,40 +206,3 @@ build_podman
 build_ocijail
 build_ngbridge
 
-if [ -n "$BUILD_IMAGE" ]; then
-    build_image
-
-    # The command goes to stdout, unprefixed, so it can be copied; everything else
-    # this script says is on stderr.
-    log "run the image with:"
-    cat <<EOT
-podman \\
-    --runtime "$here/bin/ocijail" \\
-    --hooks-dir $here/ocijail/examples/nested-podman/hooks.d \\
-    run --rm -it \\
-    --annotation org.freebsd.jail.vnet=new \\
-    --annotation org.freebsd.jail.allow.mount=true \\
-    --annotation org.freebsd.jail.allow.mount.devfs=true \\
-    --annotation org.freebsd.jail.allow.mount.fdescfs=true \\
-    --annotation org.freebsd.jail.allow.mount.nullfs=true \\
-    --annotation org.freebsd.jail.allow.mount.tmpfs=true \\
-    --annotation org.freebsd.jail.allow.chflags=true \\
-    --annotation org.freebsd.jail.children.max=8 \\
-    --device /dev/pf \\
-    $BUILD_IMAGE
-EOT
-fi
-
-local_network="$(CONTAINERS_HELPER_BINARY_DIR="$here/bin" "$here/bin/podman" info --format '{{.Host.NetworkBackend}}')"
-system_network="$local_network"
-
-if system_podman="$(command -v podman)"; then
-    system_network="$("$system_podman" info --format '{{.Host.NetworkBackend}}')"
-    echo -n "system podman: "
-    "$system_podman" --version
-    echo "system network: $system_network"
-fi
-
-echo -n "local podman: "
-"$here/bin/podman" --version
-echo "local network: $local_network"

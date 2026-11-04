@@ -1,9 +1,7 @@
-ARG BASE_IMAGE=ghcr.io/freebsd/freebsd-runtime:15.1
-ARG PKG_CONTAINER_LIBS_COMMON=containers-common
-FROM ${BASE_IMAGE}
+FROM freebsd-minimal
 
 RUN pkg install -y FreeBSD-utilities FreeBSD-pf conmon gpgme \
-        ${PKG_CONTAINER_LIBS_COMMON} \
+        container-libs-common \
         containernetworking-plugins && \
     { pkg delete -fy python312 py312-packaging || true; } && \
     pkg autoremove -y && \

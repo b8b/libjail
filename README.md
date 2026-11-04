@@ -15,10 +15,18 @@ Those trees are git submodules, so a plain clone is not enough:
 git submodule update --init --recursive
 ```
 
-`patchwork/build.sh` needs FreeBSD 15.1 or later and `buildah`. It builds
-`patchwork/bin/{podman,ocijail,ngbridge,ngbridge-cni}` in a throwaway bootstrap jail
-and then the image itself:
+`patchwork/build*.sh` needs `podman` with valid storage configuration. It builds
+`patchwork/bin/{podman,ocijail,ngbridge,ngbridge-cni}` in a throwaway bootstrap
+jail and then the podman image itself:
 
 ```
-cd patchwork && ./build.sh
+cd patchwork
+
+# optionally switch to podman-5.8 branch for `CNI` support
+git -C container-libs switch podman-5.8
+git -C podman switch v5.8
+
+./build-minimal-image.sh
+./build-podman.sh
+./build-podman-image.sh
 ```

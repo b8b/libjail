@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+here=$(realpath "$(dirname "$0")")
+tree="$here"
+cd "$tree"
+
 # required boot files expected to exist on the current system
 #
 # The base package `FreeBSD-pkg-bootstrap` contains the trust keys for the
@@ -71,6 +75,11 @@ use_base_tar() {
 boot_files_prefix=/
 
 use_base_system() {
+    trust_store="etc/ssl usr/share/certs"
+
+    if [ -r "$boot_files_prefix"usr/local/share/certs/ca-root-nss.crt ]; then
+        trust_store=usr/local/share/certs/ca-root-nss.crt
+    fi
     tar -cf - \
         -C "$boot_files_prefix" \
         etc/pkg \
@@ -78,7 +87,7 @@ use_base_system() {
         etc/group \
         etc/pwd.db \
         etc/services \
-        usr/local/share/certs/ca-root-nss.crt \
+        ${trust_store} \
         rescue/sh \
         usr/local/sbin/pkg-static | \
     tar -cf - \
@@ -86,54 +95,139 @@ use_base_system() {
         @- FreeBSD-"$base_conf".conf
 }
 
+log() { echo "build.sh: $*" >&2; }
+die() { echo "build.sh: $*" >&2; exit 1; }
+
+bootstrap_bid=
+bootstrap_cid=
+bootstrap_jid=
+jail_root=
+
+on_exit() {
+    status="$?"
+    if [ -n "$bootstrap_jid" ]; then
+        jail -r "$bootstrap_jid"
+        umount -f "$jail_root/dev"
+    fi
+    if [ -n "$bootstrap_cid" ]; then
+        if [ "$status" -eq 0 ]; then
+            podman rm "$bootstrap_cid"
+        else
+            log "build failed; left $bootstrap_cid in place"
+            log "remove with: podman rm $bootstrap_cid"
+        fi
+    fi
+    if [ -n "$bootstrap_bid" ]; then
+        podman rmi "$bootstrap_bid"
+    fi
+}
+trap on_exit EXIT
+
+check_podman() {
+    command -v podman >/dev/null 2>&1 || \
+        die "podman not found (pkg install podman)"
+}
+
+check_jail() {
+    if [ "$(sysctl -n security.jail.jailed)" != 1 ]; then
+        return
+    fi
+
+    # podman calls chroot(2) with directory descriptors
+    # still open, which only works with the value 2. It cannot be set from a
+    # jail, and it is a host setting, so only report it.
+    value=$(sysctl -n kern.chroot_allow_open_directories)
+    [ "$value" = 2 ] ||
+        die "kern.chroot_allow_open_directories is $value, must be 2" \
+            "(set it on the host: sysctl kern.chroot_allow_open_directories=2," \
+            "and keep it in /etc/sysctl.conf; this script will not change it)"
+
+    #TODO check extattr
+
+    if ! jail -c path=/ command=/usr/bin/true; then
+        die "inside a jail that cannot create jails at all:" \
+            " (children.max is 0, or the jail is not allowed to" \
+            "create child jails)"
+    fi
+
+    missing=
+    for allow in allow.mount allow.mount.devfs allow.mount.fdescfs \
+            allow.mount.nullfs allow.mount.tmpfs allow.chflags \
+            allow.raw_sockets; do
+        if ! jail -c path=/ command=/usr/bin/true "$allow=true"; then
+            missing="${missing:+$missing }$allow"
+        fi
+    done
+    if [ -n "$missing" ]; then
+        die "inside a jail that lacks the parameters a container build needs:" \
+            "$missing (add them to the jail's configuration)"
+    fi
+
+    if ! jail -c path=/ command=/usr/bin/true allow.mount.zfs=true; then
+        log "note: no allow.mount.zfs; needed if podman uses the zfs storage driver"
+    fi
+}
+
+prepare_jail() {
+    jail_root="$(podman mount "$bootstrap_cid")"
+    mkdir -p "$jail_root"/dev "$jail_root"/etc
+    cp /etc/resolv.conf "$jail_root"/etc/
+    jail_opt="persist allow.chflags ip4=inherit ip6=inherit"
+    if [ "$(sysctl -n security.jail.jailed)" != 1 ]; then
+        jail_opt="$jail_opt mount.devfs"
+    else
+        mount -t devfs devfs "$jail_root/dev"
+    fi
+    bootstrap_jid="$(jail -ci path="$jail_root" $jail_opt)"
+    log "bootstrap jail $bootstrap_jid ready on $jail_root"
+}
+
+check_podman
+check_jail
+
+#TODO check policy.json (import fails with default reject policy)
+
 if [ "$requested_maj" = "$v_maj" ] && [ "$requested_arch" = "$arch" ]; then
-    bid="$(use_base_system | podman import -q -)"
+    bootstrap_bid="$(use_base_system | podman import -q -)"
 else
-    bid="$(use_base_tar | podman import -q -)"
+    bootstrap_bid="$(use_base_tar | podman import -q -)"
 fi
 
-if [ -z "$bid" ]; then
+if [ -z "$bootstrap_bid" ]; then
     echo "importing the bootstrap image failed" >&2
     exit 1
 fi
 
-trap 'podman rmi "$bid"' EXIT
+bootstrap_cid="$(podman create --quiet --network=none "$bootstrap_bid")"
 
-here=$(realpath "$(dirname "$0")")
-cidfile="$(mktemp /tmp/boot.cid.XXXXXXXX)"
+if [ -z "$bootstrap_cid" ]; then
+    echo "creating bootstrap container failed" >&2
+    exit 1
+fi
 
-on_exit() {
-    cid="$(cat "$cidfile")"
-    [ -n "$cid" ] && podman rm -f "$cid"
-    [ -n "$bid" ] && podman rmi "$bid"
-    rm -f "$cidfile"
-}
+prepare_jail
 
-trap on_exit EXIT
+jexec "$bootstrap_jid" /rescue/sh -c "set -e
+    export ABI="${ABI:-FreeBSD:$requested_maj:$requested_arch}"
+    export OSVERSION="${OSVERSION:-$os_reldate}"
+    if [ -r /usr/local/share/certs/ca-root-nss.crt ]; then
+        export SSL_CA_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
+    fi
+    pkg-static install -y -r FreeBSD-base \
+    FreeBSD-caroot FreeBSD-openssl FreeBSD-zoneinfo \
+    FreeBSD-runtime FreeBSD-rc FreeBSD-mtree FreeBSD-fetch \
+    FreeBSD-libucl FreeBSD-libexecinfo FreeBSD-kerberos-lib \
+    FreeBSD-pkg-bootstrap
+    pkg-static install -y -r FreeBSD-base FreeBSD-certctl
+    rm -Rf /rescue /usr/local/share /usr/local/sbin
+    SSL_CA_CERT_FILE= certctl rehash
+    service ldconfig start"
 
-podman --runtime "$here/bin/ocijail" \
-    run --cidfile "$cidfile" \
-    -e ABI="${ABI:-FreeBSD:$requested_maj:$requested_arch}" \
-    -e OSVERSION="${OSVERSION:-$os_reldate}" \
-    "$bid" \
-    /rescue/sh -c "set -e
-        if [ -r /usr/local/share/certs/ca-root-nss.crt ]; then
-            export SSL_CA_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
-        fi
-        pkg-static install -y -r FreeBSD-base \
-        FreeBSD-caroot FreeBSD-openssl FreeBSD-zoneinfo \
-        FreeBSD-runtime FreeBSD-rc FreeBSD-mtree FreeBSD-fetch \
-        FreeBSD-libucl FreeBSD-libexecinfo FreeBSD-kerberos-lib \
-        FreeBSD-pkg-bootstrap
-        pkg-static install -y -r FreeBSD-base FreeBSD-certctl
-        rm -Rf /rescue /usr/local/share /usr/local/sbin
-        SSL_CA_CERT_FILE= certctl rehash
-        service ldconfig start
-        freebsd-version -u > /var/cache/pkg/.freebsd-version"
+tag="$(jexec "$bootstrap_jid" freebsd-version)"
 
-cid="$(cat "$cidfile")"
-tag="$(podman cp "$cid":/var/cache/pkg/.freebsd-version - | tar -xOf -)"
-
-podman export "$cid" | \
-    tar -cf - --exclude var/cache/pkg --exclude var/db/pkg/repos @- | \
+tar -C "$jail_root" -cf - --one-file-system \
+    --exclude var/cache/pkg \
+    --exclude var/db/pkg/repos . | \
     podman import -c 'CMD /bin/sh' - freebsd-minimal:"$tag"
+
+podman tag freebsd-minimal:"$tag" freebsd-minimal:latest

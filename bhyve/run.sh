@@ -37,31 +37,44 @@ if [ -t 0 ]; then
 fi
 
 # setup esp
-tar xf disk0.tar.zst
+esp_offset="$((1024 * 1024))"
+esp_size="$((1024 * 1024 * ${ESP_SIZE_MIB:-64}))"
+esp_root=/disk0
 
-mkdir -p /boot/efi/boot/loader.conf.d
-echo 'vfs.root.mountfrom="zfs:zroot/ROOT/default"' > /boot/efi/boot/loader.conf.d/rootdev.conf
-espadm --image disk0.img --add /boot/efi
+mkdir -p "$esp_root"/boot/loader.conf.d
+echo 'vfs.root.mountfrom="zfs:zroot/ROOT/default"' > \
+    "$esp_root"/boot/loader.conf.d/rootdev.conf
+
+if ! [ -e disk0.img ]; then
+    mkimg -s gpt \
+      -p "efi/efiboot0::$esp_size:$esp_offset" \
+      -o disk0.img
+fi
+espadm --image disk0.img --source "$esp_root"
 
 # setup root disk
-printf "/dev/gpt/efiboot0\t/boot/efi\tmsdosfs\trw\t2\t2" > /etc/fstab
-
-cat > /etc/rc.conf <<EOF
+cat > /disk1/etc/rc.conf <<EOF
 hostname="$(hostname)"
 ifconfig_DEFAULT="${vm_ifconfig}"
 defaultrouter="${vm_gateway}"
 zfs_enable="YES"
 EOF
 
-echo 'security.mac.do.rules="gid=0>uid=0,gid=0,+gid=*"' >> /etc/sysctl.conf
+mkdir -p /disk1/etc/rc.conf.d
 
 if [ -n "$vm_routes" ]; then
-    printf '%s\n' "$vm_routes" >> /etc/rc.conf
+    echo "$vm_routes" > /disk1/etc/rc.conf.d/vmroutes.conf
 fi
 
 if [ -n "${AUTHORIZED_KEYS:-}" ]; then
-    echo "$AUTHORIZED_KEYS" > /home/freebsd/.ssh/authorized_keys
-    echo 'sshd_enable="YES"' >> /etc/rc.conf
+    echo "$AUTHORIZED_KEYS" > /disk1/home/freebsd/.ssh/authorized_keys
+    echo 'sshd_enable="YES"' > /disk1/etc/rc.conf.d/sshd.conf
+fi
+
+disk1_src_args="/disk1"
+
+if [ -e /disk1.deleted.mtree ]; then
+    disk1_src_args="/disk1.deleted.mtree /disk1"
 fi
 
 makefs -t zfs -s "${ROOT_SIZE:-100g}" -D -N /etc \
@@ -71,7 +84,7 @@ makefs -t zfs -s "${ROOT_SIZE:-100g}" -D -N /etc \
     -o 'fs=zroot;mountpoint=none' \
     -o 'fs=zroot/ROOT;mountpoint=none' \
     -o 'fs=zroot/ROOT/default;mountpoint=/;canmount=noauto;compression=on' \
-    disk1.img /root.mtree
+    /disk1.img ${disk1_src_args}
 
 set -x
 

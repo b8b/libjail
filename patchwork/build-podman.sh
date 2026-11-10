@@ -119,6 +119,17 @@ build_podman() {
     make_flags="EXTRA_BUILDTAGS=cni"
     [ -z "$commit" ] || make_flags="$make_flags GIT_COMMIT=$commit"
 
+    if [ -n "${PODMAN_REVENDOR:-}" ]; then
+        jexec "$bootstrap_jid" /usr/bin/env \
+            HOME=/root PATH=/usr/local/bin:/usr/bin:/bin \
+            GOTOOLCHAIN=local sh -c "cd $src && \
+                go mod edit -replace common=../container-libs/common && \
+                go mod edit -replace storage=../container-libs/storage && \
+                go mod edit -replace image=../container-libs/image && \
+                go mod vendor
+            " || die "vendoring container-libs into $src failed"
+    fi
+
     # The Makefile adds the cni tag on FreeBSD by itself; passing it again keeps
     # a build with a different GOOS from losing the only backend that works here.
     jexec "$bootstrap_jid" /usr/bin/env \

@@ -101,33 +101,6 @@ copy_sources() {
     log "sources copied to $src"
 }
 
-# use_container_libs puts the container-libs checkout in place of the vendored
-# copy of every module it provides. Podman is built with -mod=vendor, so the
-# vendored tree is what gets compiled: without this, changes in container-libs
-# would not reach the build, and with it they do, without a re-vendor and
-# without committing anything to the podman tree.
-#
-# The vendored copies are replaced wholesale, which covers edited files and
-# added files. A new package would also need a line in vendor/modules.txt, so
-# that still wants a "go mod vendor" on the host.
-use_container_libs() {
-    src="$jail_root/usr/src"
-    [ -d "$src/container-libs" ] || return 0
-    for module_dir in "$src/container-libs"/*/; do
-        [ -f "${module_dir}go.mod" ] || continue
-        module=$(awk '$1 == "module" { print $2; exit }' "${module_dir}go.mod")
-        [ -n "$module" ] || continue
-        vendored="$src/podman/vendor/$module"
-        [ -d "$vendored" ] || continue
-        rm -rf "$vendored"
-        cp -a "$module_dir" "$vendored"
-        # go mod vendor copies packages, not the module's own files.
-        rm -f "$vendored/go.mod" "$vendored/go.sum"
-        rm -rf "$vendored/vendor"
-        log "using $module from container-libs"
-    done
-}
-
 build_podman() {
     src=/usr/src/podman
 
@@ -201,7 +174,6 @@ check_distfiles
 bootstrap_rootfs
 prepare_jail
 copy_sources
-use_container_libs
 build_podman
 build_ocijail
 build_ngbridge

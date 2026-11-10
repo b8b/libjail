@@ -1,8 +1,8 @@
 FROM freebsd-minimal
 
-RUN pkg install -y FreeBSD-utilities FreeBSD-pf conmon gpgme \
-        container-libs-common \
-        containernetworking-plugins && \
+RUN pkg install -y FreeBSD-utilities FreeBSD-pam \
+        FreeBSD-jail FreeBSD-pf FreeBSD-zfs FreeBSD-flua  \
+        conmon gpgme container-libs-common containernetworking-plugins && \
     { pkg delete -fy python312 py312-packaging || true; } && \
     pkg autoremove -y && \
     pkg clean -y && \
@@ -38,15 +38,16 @@ ADD bin/podman /usr/local/bin/podman
 ADD bin/ngbridge /usr/local/bin/ngbridge
 ADD bin/ngbridge-cni /usr/local/libexec/cni/ngbridge-cni
 
-RUN mkdir /usr/local/libexec/podman /var/run/ocijail
+RUN mkdir -p /usr/local/libexec/podman /usr/local/libexec/oci-hooks
 ADD bin/netavark /usr/local/libexec/podman/netavark
 
-ADD storage.conf /usr/local/etc/containers/storage.conf
+RUN rm -Rf /run && ln -s var/run /run
+
+RUN mkdir -p /var/db/containers && \
+    cp /usr/local/etc/containers/pf.conf.sample /etc/pf.conf
 
 ADD entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
-RUN [ "$(podman --network-backend cni info --format '{{.Host.NetworkBackend}}' 2>/dev/null)" = "cni" ] || \
-    sed -ie 's/default_network_backend=cni/default_network_backend=netavark/' /usr/local/bin/entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["/bin/sh"]
